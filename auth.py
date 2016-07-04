@@ -13,10 +13,17 @@ ARGS.add_argument(
 
 ARGS.add_argument(
     '--cafile', action="store", dest='cafile',
-    default='cacert.pem', type=str, help='Certificate chain for the UAG https')
+    default='creds/cacert.pem', type=str, help='Certificate chain for the UAG https')
+
+ARGS.add_argument(
+    '--auth', action="store", dest='auth',
+    default='creds/auth.txt', type=str, help='Username and password in plaintext separated by a new line')
 
 
 args = ARGS.parse_args()
+with open(args.auth, 'r') as args.auth:
+    auth_creds = args.auth.read()
+
 
 ctx = ssl.create_default_context(cafile=args.cafile)
 
@@ -35,8 +42,8 @@ print(uag_viewstate)
 
 post_data = {
 	"__VIEWSTATE": uag_viewstate,
-	"FormLogOnUsernameTextBox": "",
-	"FormLogOnPasswordTextBox": "",
+	"FormLogOnUsernameTextBox": auth_creds.split("\n")[0],
+	"FormLogOnPasswordTextBox": auth_creds.split("\n")[1],
 	"FormLogOnRepositorySelectionList": "0",
 	"FormLogOnLogOnCommand": "Log on",
 }
