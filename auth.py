@@ -4,8 +4,6 @@ import urllib.request, ssl
 from urllib.parse import urljoin, quote
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 
-#import poster.encode# import multipart_encode
-#import poster.streaminghttp# import register_openers
 import mimetypes
 import email.generator
 
@@ -66,82 +64,68 @@ ARGS.add_argument(
     default='', type=str, help='Directory in MS FF')
 
 
-args = ARGS.parse_args()
-with open(args.auth, 'r') as args.auth:
-    auth_creds = args.auth.read()
 
 
+def perform_auth(opener):
+    url = urllib.request.Request("https://" + args.domain + "/")
+    url.add_header("User-Agent", USER_AGENT)
+    url.add_header("Accept", ACCEPT)
 
-ctx = ssl.create_default_context(cafile=args.cafile)
-cj = CookieJar(DefaultCookiePolicy(rfc2965=True, strict_ns_domain=DefaultCookiePolicy.DomainStrict, blocked_domains=["ads.net", ".ads.net"]))
+    r = opener.open(url)
 
-opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), urllib.request.HTTPCookieProcessor(cj))
+    login_url = r.url
+    html_doc = r.read().decode('utf-8')
+    print(login_url)
+    print(html_doc)
 
-#opener = poster.streaminghttp.register_openers()
-#opener.add_handler(urllib.request.HTTPSHandler(context=ctx))
-#opener.add_handler(urllib.request.HTTPCookieProcessor(cj))
+    soup = BeautifulSoup(html_doc, 'html.parser')
+    post_url = soup.find(id="form1").get("action")
 
-
-
-url = urllib.request.Request("https://" + args.domain + "/")
-url.add_header("User-Agent", USER_AGENT)
-url.add_header("Accept", ACCEPT)
-
-pprint(url.header_items())
-#sys.exit()
-r = opener.open(url)
-
-login_url = r.url
-html_doc = r.read().decode('utf-8')
-print(login_url)
-print(html_doc)
-
-soup = BeautifulSoup(html_doc, 'html.parser')
-post_url = soup.find(id="form1").get("action")
-
-uag_dummy_repository = soup.find(id="form1").find("input", {"name": "dummy_repository"}).get("value")
-uag_repository = soup.find(id="form1").find("input", {"name": "repository"}).get("value")
+    uag_dummy_repository = soup.find(id="form1").find("input", {"name": "dummy_repository"}).get("value")
+    uag_repository = soup.find(id="form1").find("input", {"name": "repository"}).get("value")
 
 
-post_data = {
-    "dummy_repository": uag_dummy_repository,
-    "repository": uag_repository,
-    "user_name": auth_creds.split("\n")[0],
-    "password": auth_creds.split("\n")[1],
+    post_data = {
+        "dummy_repository": uag_dummy_repository,
+        "repository": uag_repository,
+        "user_name": auth_creds.split("\n")[0],
+        "password": auth_creds.split("\n")[1],
 
-    "site_name": "fileaccess",
+        "site_name": "fileaccess",
 
-    "secure": "1",
-    "resource_id": "2",
-    "login_type": "3",
-}
+        "secure": "1",
+        "resource_id": "2",
+        "login_type": "3",
+    }
 
-details = urllib.parse.urlencode(post_data).encode('UTF-8')
-url = urllib.request.Request( urljoin(login_url, post_url) , details)
-url.add_header("User-Agent", USER_AGENT)
-url.add_header("Accept", ACCEPT)
+    details = urllib.parse.urlencode(post_data).encode('UTF-8')
+    url = urllib.request.Request( urljoin(login_url, post_url) , details)
+    url.add_header("User-Agent", USER_AGENT)
+    url.add_header("Accept", ACCEPT)
 
-r = opener.open(url)
+    r = opener.open(url)
 
-html_doc = r.read().decode('utf-8', 'ignore');
-new_url = re.search('window\.location\.replace\("([^"]+)"\)', html_doc).group(1)
+    html_doc = r.read().decode('utf-8', 'ignore');
+    new_url = re.search('window\.location\.replace\("([^"]+)"\)', html_doc).group(1)
 
-print(r.url)
-print(html_doc)
+    print(r.url)
+    print(html_doc)
 
-url = urllib.request.Request( urljoin(r.url, new_url))
-url.add_header("User-Agent", USER_AGENT)
-url.add_header("Accept", ACCEPT)
+    url = urllib.request.Request( urljoin(r.url, new_url))
+    url.add_header("User-Agent", USER_AGENT)
+    url.add_header("Accept", ACCEPT)
 
-r = opener.open(url)
+    r = opener.open(url)
 
-html_doc = r.read().decode('utf-8', 'ignore');
+    html_doc = r.read().decode('utf-8', 'ignore');
 
-main_url = r.url
-print(r.url)
-print(html_doc)
+    main_url = r.url
+    print(r.url)
+    print(html_doc)
 
-def create_folder(folder_name):
+    return main_url
+
+def create_folder(opener, main_url, folder_name):
     
     folder = args.dir + "/" + folder_name
     folder_escaped = quote(folder, safe='')
@@ -162,4 +146,46 @@ def create_folder(folder_name):
 
     return html_doc
 
-pprint(create_folder("testing-132-folders"))
+
+def list_folder(opener, main_url, folder_name):
+    
+    folder = args.dir + "/" + folder_name
+    folder_escaped = quote(folder, safe='')
+
+    create_folder_url = urljoin(main_url, "../filesharing/filelist.asp?S=" + folder_escaped + "&T=9")
+
+    url = urllib.request.Request(create_folder_url)
+
+    url.add_header("User-Agent", USER_AGENT)
+    url.add_header("Accept", ACCEPT)
+
+    r = opener.open(url)
+    html_doc = r.read().decode('utf-8', 'ignore');
+
+
+    soup = BeautifulSoup(html_doc, 'html.parser')
+    file_nodes = soup.find(id="fileListTable").find("tbody").find_all("label")
+    return_arr = []
+    for i in file_nodes:
+        if i.get("onmousedown").find('isFile = true') != -1:
+            isFile = True
+        else:
+            isFile = False
+
+        return_arr.append((isFile, i.find('nobr').text))
+    return return_arr
+
+
+if __name__ == '__main__':
+
+    args = ARGS.parse_args()
+    with open(args.auth, 'r') as args.auth:
+        auth_creds = args.auth.read()
+
+    ctx = ssl.create_default_context(cafile=args.cafile)
+    cj = CookieJar(DefaultCookiePolicy(rfc2965=True, strict_ns_domain=DefaultCookiePolicy.DomainStrict, blocked_domains=["ads.net", ".ads.net"]))
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), urllib.request.HTTPCookieProcessor(cj))
+
+    main_url = perform_auth(opener)
+    create_folder(opener, main_url, 'testing-folders')
+    pprint(list_folder(opener, main_url, ''))
