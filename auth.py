@@ -76,6 +76,11 @@ ARGS.add_argument(
     default='', type=str, help='Directory in MS FF')
 
 
+ARGS.add_argument(
+    '--server', action="store_true", dest='server',
+     help='connect it to the server')
+
+
 
 
 def perform_auth(opener):
@@ -237,8 +242,9 @@ def get_content(opener, main_url, file):
     r = opener.open(url)
     doc = r.read()#.decode('utf-8', 'ignore');
 
-    if doc.decode('utf-8','ignore').find("content='0;URL=errorPage.asp?error=404"):
+    if doc.decode('utf-8','ignore').find("content='0;URL=errorPage.asp?error=404") != -1:
         return ""
+    pprint(doc)
     return doc
 
 
@@ -256,7 +262,7 @@ async def handle_client(client_reader, client_writer):
     create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-client") # not like in spec
     create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-server") # not like in spec
 
-    task = asyncio.Task(handle_polling(client_writer, conn_token))
+    task = asyncio.Task(handle_polling(client_writer, conn_token,opener, main_url))
     
     i = 0
     while True:
@@ -267,7 +273,7 @@ async def handle_client(client_reader, client_writer):
         put_file(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-client/"+str(i).zfill(8)+".bin", data)
         i += 1
 
-async def handle_polling(client_writer, conn_token):
+async def handle_polling(client_writer, conn_token,opener, main_url):
 
     i = 0
     while True:
@@ -276,10 +282,48 @@ async def handle_polling(client_writer, conn_token):
             client_writer.write(data)
             i += 1
         else:
-            log.debug("sleeping in uag listener")
+            log.debug("sleeping in line-server uag listener")
             await asyncio.sleep(1)
 
-            
+async def handle_polling_client(writer, conn_token,opener, main_url):
+
+    i = 0
+    log.debug("conn_token is "+conn_token)
+    while True:
+        data = get_content(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-client/"+str(i).zfill(8)+".bin")
+        if data is not "":
+            log.debug("got " + data.decode("utf-8")+" data")
+            writer.write(data)
+            i += 1
+        else:
+            log.debug("sleeping in line-client uag listener")
+            await asyncio.sleep(1)
+
+async def fire_up_client():
+
+    conn_token = ""
+    while True:
+        data = list_folder(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/")
+        if len(data):
+            conn_token = data[0][1]
+            delete_file(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/"+conn_token)
+            break
+        
+    conn_token = conn_token.replace('.con', '')
+    
+    reader, writer = await asyncio.open_connection("127.0.0.1", 8001)
+    
+    task = asyncio.Task(handle_polling_client(writer, conn_token,opener, main_url))
+    i=0
+    while True:
+        log.debug("waiting for read from server")
+        data = await reader.read(64)
+        log.debug("got data")
+        log.debug("putting %s to line-server" % data.decode('utf-8'))
+        put_file(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-server/"+str(i).zfill(8)+".bin", data)
+        i += 1
+    
+    
 
 if __name__ == '__main__':
 
@@ -318,7 +362,12 @@ if __name__ == '__main__':
     if signal is not None and sys.platform != 'win32':
         loop.add_signal_handler(signal.SIGINT, loop.stop)
 
-    f = asyncio.start_server(accept_client, host=None, port=8000)
+
+    if args.server:
+        f = asyncio.ensure_future(fire_up_client())
+    else:
+        f = asyncio.start_server(accept_client, host=None, port=8000)
+
     loop.run_until_complete(f)
     loop.run_forever()
     
