@@ -175,6 +175,23 @@ def list_folder(opener, main_url, folder_name):
         return_arr.append((isFile, i.find('nobr').text))
     return return_arr
 
+def get_content(opener, main_url, file):
+    
+    folder = args.dir + "/" + file
+    folder_escaped = quote(folder, safe='')
+
+    create_folder_url = urljoin(main_url, "../filesharing/FileSharingExt/?OPEN&P=" + folder_escaped)
+
+    url = urllib.request.Request(create_folder_url)
+
+    url.add_header("User-Agent", USER_AGENT)
+    url.add_header("Accept", ACCEPT)
+
+    r = opener.open(url)
+    doc = r.read()#.decode('utf-8', 'ignore');
+
+
+    return doc
 
 if __name__ == '__main__':
 
@@ -189,3 +206,4 @@ if __name__ == '__main__':
     main_url = perform_auth(opener)
     create_folder(opener, main_url, 'testing-folders')
     pprint(list_folder(opener, main_url, ''))
+    pprint(get_content(opener, main_url, 'ms-ff-uag-tcp.md'))
