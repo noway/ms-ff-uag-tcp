@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+import asyncio
+try:
+    import signal
+except ImportError:
+    signal = None
+import logging
+    
 import urllib.request, ssl
 from urllib.parse import urljoin, quote
 from http.cookiejar import CookieJar, DefaultCookiePolicy
@@ -14,6 +21,10 @@ import sys
 import argparse
 from pprint import pprint
 
+import datetime
+import random
+
+log = logging.getLogger(__name__)
 
 def encode_multipart_formdata(fields, files):
     """
@@ -21,25 +32,26 @@ def encode_multipart_formdata(fields, files):
     files is a sequence of (name, filename, value) elements for data to be uploaded as files
     Return (content_type, body) ready for httplib.HTTP instance
     """
-    BOUNDARY = email.generator._make_boundary().replace('=','-')
-    CRLF = '\r\n'
+    BOUNDARY = bytes(email.generator._make_boundary().replace('=','-'), 'ascii')
+    CRLF = b'\r\n'
     L = []
     for (key, filename, value) in files:
-        L.append('--' + BOUNDARY)
-        L.append('Content-Disposition: form-data; name="%s"; filename="%s"' % (key, filename))
-        L.append('Content-Type: %s' % (mimetypes.guess_type(filename)[0] or 'application/octet-stream'))
-        L.append('')
+        L.append(b'--' + BOUNDARY)
+        L.append(b'Content-Disposition: form-data; name="%b"; filename="%b"' % (bytes(key,'ascii'), bytes(filename,'ascii')))
+        L.append(b'Content-Type: %b' % bytes((mimetypes.guess_type(filename)[0] or 'application/octet-stream'), 'ascii') )
+        L.append(b'')
         L.append(value)
     for (key, value) in fields:
-        L.append('--' + BOUNDARY)
-        L.append('Content-Disposition: form-data; name="%s"' % key)
-        L.append('')
-        L.append(value)
-    L.append('--' + BOUNDARY + '--')
-    L.append('')
+        L.append(b'--' + BOUNDARY)
+        L.append(b'Content-Disposition: form-data; name="%b"' % bytes(key,'ascii'))
+        L.append(b'')
+        L.append(bytes(value,'ascii'))
+    L.append(b'--' + BOUNDARY + b'--')
+    L.append(b'')
+    
     body = CRLF.join(L)
     content_type = 'multipart/form-data; boundary=%s' % BOUNDARY
-    return content_type, body.encode('utf-8')
+    return content_type, body#.encode('utf-8')
 
 
 ARGS = argparse.ArgumentParser(description="ms-ff-uag-tcp")
@@ -225,8 +237,49 @@ def get_content(opener, main_url, file):
     r = opener.open(url)
     doc = r.read()#.decode('utf-8', 'ignore');
 
-
+    if doc.decode('utf-8','ignore').find("content='0;URL=errorPage.asp?error=404"):
+        return ""
     return doc
+
+
+def accept_client(client_reader, client_writer):
+    log.info("New Connection")
+    task = asyncio.Task(handle_client(client_reader, client_writer))
+
+
+async def handle_client(client_reader, client_writer):
+
+    conn_token = datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + ('%08X' % random.randrange(16**8))
+
+    put_file(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con", b'')
+    create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est") # not like in spec
+    create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-client") # not like in spec
+    create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-server") # not like in spec
+
+    task = asyncio.Task(handle_polling(client_writer, conn_token))
+    
+    i = 0
+    while True:
+        log.debug("waiting for read from client")
+        data = await client_reader.read(64)
+        log.debug("got data")
+        log.debug("putting %s to line-client" % data.decode('utf-8'))
+        put_file(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-client/"+str(i).zfill(8)+".bin", data)
+        i += 1
+
+async def handle_polling(client_writer, conn_token):
+
+    i = 0
+    while True:
+        data = get_content(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-server/"+str(i).zfill(8)+".bin")
+        if data is not "":
+            client_writer.write(data)
+            i += 1
+        else:
+            log.debug("sleeping in uag listener")
+            await asyncio.sleep(1)
+
+            
 
 if __name__ == '__main__':
 
@@ -239,8 +292,43 @@ if __name__ == '__main__':
     opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), urllib.request.HTTPCookieProcessor(cj))
 
     main_url = perform_auth(opener)
+
+
+
+
+    log = logging.getLogger("")
+    formatter = logging.Formatter("%(asctime)s %(levelname)s " +
+                                  "[%(module)s:%(lineno)d] %(message)s")
+    # setup console logging
+
+    lvl = logging.DEBUG
+
+    log.setLevel(lvl)
+    ch = logging.StreamHandler()
+    ch.setLevel(lvl)
+
+    ch.setFormatter(formatter)
+    log.addHandler(ch)
+    
+    
+
+
+    loop = asyncio.get_event_loop()
+
+    if signal is not None and sys.platform != 'win32':
+        loop.add_signal_handler(signal.SIGINT, loop.stop)
+
+    f = asyncio.start_server(accept_client, host=None, port=8000)
+    loop.run_until_complete(f)
+    loop.run_forever()
+    
+
+
+
+
     #create_folder(opener, main_url, 'testing-folders')
     #pprint(list_folder(opener, main_url, ''))
     #pprint(get_content(opener, main_url, 'ms-ff-uag-tcp.md'))
     #put_file(opener, main_url, 'test.txt', 'hello world')
-    delete_file(opener, main_url, 'testing-132-folders')
+    #delete_file(opener, main_url, 'testing-132-folders')
+    
