@@ -41,7 +41,7 @@ def encode_multipart_formdata(fields, files):
     L.append('')
     body = CRLF.join(L)
     content_type = 'multipart/form-data; boundary=%s' % BOUNDARY
-    return content_type, body
+    return content_type, body.encode('utf-8')
 
 
 ARGS = argparse.ArgumentParser(description="ms-ff-uag-tcp")
@@ -137,6 +137,7 @@ r = opener.open(url)
 
 html_doc = r.read().decode('utf-8', 'ignore');
 
+main_url = r.url
 print(r.url)
 print(html_doc)
 
@@ -145,9 +146,9 @@ def create_folder(folder_name):
     folder = args.dir + "/" + folder_name
     folder_escaped = quote(folder, safe='')
 
-    create_folder_url = urljoin(r.url, "../filesharing/newfolder.asp?Folder=" + folder_escaped)
+    create_folder_url = urljoin(main_url, "../filesharing/newfolder.asp?Folder=" + folder_escaped)
 
-    content_type, body = encode_multipart_formdata({"Filedata":folder_name, "remotefile":args.dir, "submit1": "Create Folder"}, {})
+    content_type, body = encode_multipart_formdata([("Filedata",folder_name), ("remotefile",args.dir), ("submit1", "Create Folder")], {})
 
     url = urllib.request.Request(create_folder_url , body)
 
@@ -160,3 +161,5 @@ def create_folder(folder_name):
     html_doc = r.read().decode('utf-8', 'ignore');
 
     return html_doc
+
+pprint(create_folder("testing-132-folders"))
