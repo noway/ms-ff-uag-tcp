@@ -1,8 +1,12 @@
+#!/usr/bin/env python3
+
 import urllib.request, ssl
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 import argparse
 from bs4 import BeautifulSoup
-
+import sys
+from pprint import pprint
+from urllib.parse import urljoin
 
 ARGS = argparse.ArgumentParser(description="ms-ff-uag-tcp")
 
@@ -32,10 +36,12 @@ cj = CookieJar(policy)
 opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), urllib.request.HTTPCookieProcessor(cj))
 r = opener.open("https://" + args.domain + "/")
 
-
+login_url = r.url
 html_doc = r.read().decode('utf-8')
+print(html_doc)
 
 soup = BeautifulSoup(html_doc, 'html.parser')
+post_url = soup.find(id="FormLogOn").get("action")
 uag_viewstate = soup.find(id="FormLogOn").find("input", {"name": "__VIEWSTATE"}).get("value")
 
 
@@ -46,4 +52,10 @@ post_data = {
 	"FormLogOnRepositorySelectionList": "0",
 	"FormLogOnLogOnCommand": "Log on",
 }
-print(post_data)
+
+details = urllib.parse.urlencode(post_data).encode('UTF-8')
+url = urllib.request.Request( urljoin(login_url, post_url) , details)
+r = opener.open(url)
+
+
+print(r.read().decode('utf-8', 'ignore'))
