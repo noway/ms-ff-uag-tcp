@@ -33,3 +33,10 @@ uag_viewstate = soup.find(id="FormLogOn").find("input", {"name": "__VIEWSTATE"})
 
 print(uag_viewstate)
 
+post_data = {
+	"__VIEWSTATE": uag_viewstate,
+	"FormLogOnUsernameTextBox": "",
+	"FormLogOnPasswordTextBox": "",
+	"FormLogOnRepositorySelectionList": "0",
+	"FormLogOnLogOnCommand": "Log on",
+}
