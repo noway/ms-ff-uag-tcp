@@ -283,7 +283,7 @@ async def handle_polling(client_writer, conn_token,opener, main_url):
             i += 1
         else:
             log.debug("sleeping in line-server uag listener")
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.01)
 
 async def handle_polling_client(writer, conn_token,opener, main_url):
 
@@ -297,7 +297,7 @@ async def handle_polling_client(writer, conn_token,opener, main_url):
             i += 1
         else:
             log.debug("sleeping in line-client uag listener")
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.01)
 
 async def fire_up_client():
 
