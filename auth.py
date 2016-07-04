@@ -1,13 +1,48 @@
 #!/usr/bin/env python3
 
 import urllib.request, ssl
+from urllib.parse import urljoin, quote
 from http.cookiejar import CookieJar, DefaultCookiePolicy
-import argparse
+
+#import poster.encode# import multipart_encode
+#import poster.streaminghttp# import register_openers
+import mimetypes
+import email.generator
+
 from bs4 import BeautifulSoup
-import sys
-from pprint import pprint
-from urllib.parse import urljoin
+
 import re
+import sys
+import argparse
+from pprint import pprint
+
+
+def encode_multipart_formdata(fields, files):
+    """
+    fields is a sequence of (name, value) elements for regular form fields.
+    files is a sequence of (name, filename, value) elements for data to be uploaded as files
+    Return (content_type, body) ready for httplib.HTTP instance
+    """
+    BOUNDARY = email.generator._make_boundary()
+    CRLF = '\r\n'
+    L = []
+    for (key, value) in fields:
+        L.append('--' + BOUNDARY)
+        L.append('Content-Disposition: form-data; name="%s"' % key)
+        L.append('')
+        L.append(value)
+    for (key, filename, value) in files:
+        L.append('--' + BOUNDARY)
+        L.append('Content-Disposition: form-data; name="%s"; filename="%s"' % (key, filename))
+        L.append('Content-Type: application/octet-stream' % (mimetypes.guess_type(filename)[0] or 'application/octet-stream'))
+        L.append('')
+        L.append(value)
+    L.append('--' + BOUNDARY + '--')
+    L.append('')
+    body = CRLF.join(L)
+    content_type = 'multipart/form-data; boundary=%s' % BOUNDARY
+    return content_type, body
+
 
 ARGS = argparse.ArgumentParser(description="ms-ff-uag-tcp")
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.75 Safari/537.36"
@@ -26,20 +61,32 @@ ARGS.add_argument(
     '--auth', action="store", dest='auth',
     default='creds/auth.txt', type=str, help='Username and password in plaintext separated by a new line')
 
+ARGS.add_argument(
+    '--dir', action="store", dest='dir',
+    default='', type=str, help='Directory in MS FF')
+
 
 args = ARGS.parse_args()
 with open(args.auth, 'r') as args.auth:
     auth_creds = args.auth.read()
 
 
-ctx = ssl.create_default_context(cafile=args.cafile)
 
-policy = DefaultCookiePolicy()#rfc2965=True, strict_ns_domain=DefaultCookiePolicy.DomainStrict, blocked_domains=["ads.net", ".ads.net"])
-cj = CookieJar(policy)
+ctx = ssl.create_default_context(cafile=args.cafile)
+cj = CookieJar(DefaultCookiePolicy(rfc2965=True, strict_ns_domain=DefaultCookiePolicy.DomainStrict, blocked_domains=["ads.net", ".ads.net"]))
+
 opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), urllib.request.HTTPCookieProcessor(cj))
+
+#opener = poster.streaminghttp.register_openers()
+#opener.add_handler(urllib.request.HTTPSHandler(context=ctx))
+#opener.add_handler(urllib.request.HTTPCookieProcessor(cj))
+
+
+
 url = urllib.request.Request("https://" + args.domain + "/")
 url.add_header("User-Agent", USER_AGENT)
 url.add_header("Accept", ACCEPT)
+
 pprint(url.header_items())
 #sys.exit()
 r = opener.open(url)
@@ -57,16 +104,16 @@ uag_repository = soup.find(id="form1").find("input", {"name": "repository"}).get
 
 
 post_data = {
-	"dummy_repository": uag_dummy_repository,
-	"repository": uag_repository,
-	"user_name": auth_creds.split("\n")[0],
-	"password": auth_creds.split("\n")[1],
+    "dummy_repository": uag_dummy_repository,
+    "repository": uag_repository,
+    "user_name": auth_creds.split("\n")[0],
+    "password": auth_creds.split("\n")[1],
 
-	"site_name": "fileaccess",
+    "site_name": "fileaccess",
 
-	"secure": "1",
-	"resource_id": "2",
-	"login_type": "3",
+    "secure": "1",
+    "resource_id": "2",
+    "login_type": "3",
 }
 
 details = urllib.parse.urlencode(post_data).encode('UTF-8')
@@ -92,3 +139,24 @@ html_doc = r.read().decode('utf-8', 'ignore');
 
 print(r.url)
 print(html_doc)
+
+def create_folder(folder_name):
+    
+    folder = args.dir + "/" + folder_name
+    folder_escaped = quote(folder, safe='')
+
+    create_folder_url = urljoin(r.url, "../filesharing/newfolder.asp?Folder=" + folder_escaped)
+
+    content_type, body = encode_multipart_formdata({"Filedata":folder_name, "remotefile":args.dir, "submit1": "Create Folder"}, {})
+
+    url = urllib.request.Request(create_folder_url , body)
+
+    url.add_header("User-Agent", USER_AGENT)
+    url.add_header("Accept", ACCEPT)
+    url.add_header("Content-Type", content_type)
+    url.add_header("Content-Length", str(len(body)) )
+
+    r = opener.open(url)
+    html_doc = r.read().decode('utf-8', 'ignore');
+
+    return html_doc
