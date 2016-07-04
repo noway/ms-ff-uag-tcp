@@ -21,18 +21,18 @@ def encode_multipart_formdata(fields, files):
     files is a sequence of (name, filename, value) elements for data to be uploaded as files
     Return (content_type, body) ready for httplib.HTTP instance
     """
-    BOUNDARY = email.generator._make_boundary()
+    BOUNDARY = email.generator._make_boundary().replace('=','-')
     CRLF = '\r\n'
     L = []
-    for (key, value) in fields:
-        L.append('--' + BOUNDARY)
-        L.append('Content-Disposition: form-data; name="%s"' % key)
-        L.append('')
-        L.append(value)
     for (key, filename, value) in files:
         L.append('--' + BOUNDARY)
         L.append('Content-Disposition: form-data; name="%s"; filename="%s"' % (key, filename))
-        L.append('Content-Type: application/octet-stream' % (mimetypes.guess_type(filename)[0] or 'application/octet-stream'))
+        L.append('Content-Type: %s' % (mimetypes.guess_type(filename)[0] or 'application/octet-stream'))
+        L.append('')
+        L.append(value)
+    for (key, value) in fields:
+        L.append('--' + BOUNDARY)
+        L.append('Content-Disposition: form-data; name="%s"' % key)
         L.append('')
         L.append(value)
     L.append('--' + BOUNDARY + '--')
@@ -90,9 +90,7 @@ def perform_auth(opener):
         "repository": uag_repository,
         "user_name": auth_creds.split("\n")[0],
         "password": auth_creds.split("\n")[1],
-
         "site_name": "fileaccess",
-
         "secure": "1",
         "resource_id": "2",
         "login_type": "3",
@@ -125,6 +123,26 @@ def perform_auth(opener):
 
     return main_url
 
+def put_file(opener, main_url, file, file_content):
+    
+    folder = args.dir + "/" + file
+    folder_escaped = quote(folder, safe='')
+
+    create_folder_url = urljoin(main_url, "../filesharing/FileSharingExt/ShareAccessExt.dll?P=" + folder_escaped + "&overwrite=on")
+
+    content_type, body = encode_multipart_formdata([("remotefile", args.dir), ("remotefilename", folder.replace('/', '\\').replace('\\\\', '//')), ("overwrite", "on")], [("Filedata", file, file_content)])
+    
+    url = urllib.request.Request(create_folder_url , body)
+
+    url.add_header("User-Agent", USER_AGENT)
+    url.add_header("Accept", ACCEPT)
+    url.add_header("Content-Type", content_type)
+    url.add_header("Content-Length", str(len(body)) )
+
+    r = opener.open(url)
+    html_doc = r.read().decode('utf-8', 'ignore');
+
+    return html_doc
 def create_folder(opener, main_url, folder_name):
     
     folder = args.dir + "/" + folder_name
@@ -175,6 +193,23 @@ def list_folder(opener, main_url, folder_name):
         return_arr.append((isFile, i.find('nobr').text))
     return return_arr
 
+def delete_file(opener, main_url, file):
+    
+    folder = args.dir + "/" + file
+    folder_escaped = quote(folder, safe='')
+
+    create_folder_url = urljoin(main_url, "../filesharing/filelist.asp?S=" + folder_escaped + "&action=1&T=9")
+
+    url = urllib.request.Request(create_folder_url)
+
+    url.add_header("User-Agent", USER_AGENT)
+    url.add_header("Accept", ACCEPT)
+
+    r = opener.open(url)
+    html_doc = r.read().decode('utf-8', 'ignore');
+
+    return html_doc
+
 def get_content(opener, main_url, file):
     
     folder = args.dir + "/" + file
@@ -204,6 +239,8 @@ if __name__ == '__main__':
     opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), urllib.request.HTTPCookieProcessor(cj))
 
     main_url = perform_auth(opener)
-    create_folder(opener, main_url, 'testing-folders')
-    pprint(list_folder(opener, main_url, ''))
-    pprint(get_content(opener, main_url, 'ms-ff-uag-tcp.md'))
+    #create_folder(opener, main_url, 'testing-folders')
+    #pprint(list_folder(opener, main_url, ''))
+    #pprint(get_content(opener, main_url, 'ms-ff-uag-tcp.md'))
+    #put_file(opener, main_url, 'test.txt', 'hello world')
+    delete_file(opener, main_url, 'testing-132-folders')
