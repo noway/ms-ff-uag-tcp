@@ -1,7 +1,7 @@
 import urllib.request, ssl
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 import argparse
-
+from bs4 import BeautifulSoup
 
 
 ARGS = argparse.ArgumentParser(description="ms-ff-uag-tcp")
@@ -26,4 +26,10 @@ opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), u
 r = opener.open("https://" + args.domain + "/")
 
 
-print(r.read().decode('utf-8'))
+html_doc = r.read().decode('utf-8')
+
+soup = BeautifulSoup(html_doc, 'html.parser')
+uag_viewstate = soup.find(id="FormLogOn").find("input", {"name": "__VIEWSTATE"}).get("value")
+
+print(uag_viewstate)
+
