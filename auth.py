@@ -38,7 +38,6 @@ html_doc = r.read().decode('utf-8')
 soup = BeautifulSoup(html_doc, 'html.parser')
 uag_viewstate = soup.find(id="FormLogOn").find("input", {"name": "__VIEWSTATE"}).get("value")
 
-print(uag_viewstate)
 
 post_data = {
 	"__VIEWSTATE": uag_viewstate,
@@ -47,3 +46,4 @@ post_data = {
 	"FormLogOnRepositorySelectionList": "0",
 	"FormLogOnLogOnCommand": "Log on",
 }
+print(post_data)
