@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import asyncio
+import requests
 try:
     import signal
 except ImportError:
@@ -96,17 +97,18 @@ ARGS.add_argument(
 
 
 def perform_auth(opener):
-    url = urllib.request.Request("https://" + args.domain + "/")
-    url.add_header("User-Agent", USER_AGENT)
-    url.add_header("Accept", ACCEPT)
+    #url = urllib.request.Request("https://" + args.domain + "/")
+    #url.add_header("User-Agent", USER_AGENT)
+    #url.add_header("Accept", ACCEPT)
 
-    r = opener.open(url)
-
+    r = opener.get("https://" + args.domain + "/")
+    #pprint(r.text)
+    #pprint(r.content)
     login_url = r.url
-    html_doc = r.read().decode('utf-8')
+    html_doc = r.text#read().decode('utf-8')
     logging.info(login_url)
-    #logging.debug(html_doc)
-
+    logging.debug(html_doc)
+    #sys.exit()
     soup = BeautifulSoup(html_doc, 'html.parser')
     post_url = soup.find(id="form1").get("action")
 
@@ -124,30 +126,31 @@ def perform_auth(opener):
         "login_type": "3",
     }
 
-    details = urllib.parse.urlencode(post_data).encode('UTF-8')
-    url = urllib.request.Request( urljoin(login_url, post_url) , details)
-    url.add_header("User-Agent", USER_AGENT)
-    url.add_header("Accept", ACCEPT)
+    # details = urllib.parse.urlencode(post_data).encode('UTF-8')
+    # url = urllib.request.Request( urljoin(login_url, post_url) , details)
+    #url.add_header("User-Agent", USER_AGENT)
+    #url.add_header("Accept", ACCEPT)
 
-    r = opener.open(url)
+    r = opener.post(urljoin(login_url, post_url), data=post_data)
 
-    html_doc = r.read().decode('utf-8', 'ignore');
-    # new_url = re.search('window\.location\.replace\("([^"]+)"\)', html_doc).group(1)
+    html_doc = r.text#read().decode('utf-8', 'ignore');
 
-    # logging.info(r.url)
-    # #logging.debug(html_doc)
+    new_url = re.search('window\.location\.replace\("([^"]+)"\)', html_doc).group(1)
+
+    logging.info(r.url)
+    logging.debug(html_doc)
 
     # url = urllib.request.Request( urljoin(r.url, new_url))
     # url.add_header("User-Agent", USER_AGENT)
     # url.add_header("Accept", ACCEPT)
 
-    # r = opener.open(url)
+    r = opener.get(urljoin(r.url, new_url))
 
-    # html_doc = r.read().decode('utf-8', 'ignore');
-
+    html_doc = r.text#.read().decode('utf-8', 'ignore');
     main_url = r.url
+
     logging.info(r.url)
-    #logging.debug(html_doc)
+    logging.debug(html_doc)
 
     return main_url
 
@@ -426,11 +429,17 @@ if __name__ == '__main__':
     log.addHandler(ch)
     
 
-    ctx = ssl.create_default_context(cafile=args.cafile)
-    cj = CookieJar(DefaultCookiePolicy(rfc2965=True, 
-        strict_ns_domain=DefaultCookiePolicy.DomainStrict, blocked_domains=["ads.net", ".ads.net"]))
-    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), 
-        urllib.request.HTTPCookieProcessor(cj))
+    opener = requests.session()
+    opener.verify = args.cafile
+    opener.headers.update({'User-Agent': USER_AGENT})
+
+    #opener.cert = args.cafile
+
+    # ctx = ssl.create_default_context(cafile=args.cafile)
+    # cj = CookieJar(DefaultCookiePolicy(rfc2965=True, 
+    #     strict_ns_domain=DefaultCookiePolicy.DomainStrict, blocked_domains=["ads.net", ".ads.net"]))
+    # opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), 
+    #     urllib.request.HTTPCookieProcessor(cj))
 
 
 
@@ -440,19 +449,19 @@ if __name__ == '__main__':
 
     main_url = perform_auth(opener)
 
-    loop = asyncio.get_event_loop()
+    # loop = asyncio.get_event_loop()
 
-    if signal is not None and sys.platform != 'win32':
-        loop.add_signal_handler(signal.SIGINT, loop.stop)
+    # if signal is not None and sys.platform != 'win32':
+    #     loop.add_signal_handler(signal.SIGINT, loop.stop)
 
 
-    if args.server:
-        f = asyncio.ensure_future(valet_handle_server())
-    else:
-        f = asyncio.start_server(mister_accept_client, host=None, port=8000)
+    # if args.server:
+    #     f = asyncio.ensure_future(valet_handle_server())
+    # else:
+    #     f = asyncio.start_server(mister_accept_client, host=None, port=8000)
 
-    loop.run_until_complete(f)
-    loop.run_forever()
+    # loop.run_until_complete(f)
+    # loop.run_forever()
     
 
 
