@@ -25,6 +25,8 @@ import datetime
 import random
 
 log = logging.getLogger(__name__)
+# BUFFER_SIZE = 1024*512
+BUFFER_SIZE = 1024*256
 
 def encode_multipart_formdata(fields, files):
     """
@@ -86,6 +88,10 @@ ARGS.add_argument(
      help='connect it to the server')
 
 
+ARGS.add_argument(
+    '--quiet', action="store", dest='quiet',
+    default=0, type=int, help="Don't show debug info")
+
 
 
 def perform_auth(opener):
@@ -97,7 +103,7 @@ def perform_auth(opener):
 
     login_url = r.url
     html_doc = r.read().decode('utf-8')
-    logging.debug(login_url)
+    logging.info(login_url)
     #logging.debug(html_doc)
 
     soup = BeautifulSoup(html_doc, 'html.parser')
@@ -128,7 +134,7 @@ def perform_auth(opener):
     html_doc = r.read().decode('utf-8', 'ignore');
     # new_url = re.search('window\.location\.replace\("([^"]+)"\)', html_doc).group(1)
 
-    # logging.debug(r.url)
+    # logging.info(r.url)
     # #logging.debug(html_doc)
 
     # url = urllib.request.Request( urljoin(r.url, new_url))
@@ -140,7 +146,7 @@ def perform_auth(opener):
     # html_doc = r.read().decode('utf-8', 'ignore');
 
     main_url = r.url
-    logging.debug(r.url)
+    logging.info(r.url)
     #logging.debug(html_doc)
 
     return main_url
@@ -285,7 +291,7 @@ async def handle_client(client_reader, client_writer):
     while not client_reader.at_eof():
         log.debug("MISTER: waiting for read from client")
 
-        data = await client_reader.read(1024)
+        data = await client_reader.read(BUFFER_SIZE)
 
         if client_reader.at_eof():
             data = b'!' + data
@@ -299,7 +305,7 @@ async def handle_client(client_reader, client_writer):
             ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister/pck-"+str(index).zfill(8)+".bin", data)
         index += 1
 
-    log.debug('MISTER: reader closed')
+    log.warn('MISTER: reader closed')
 
 async def handle_polling(client_writer, conn_token,opener, main_url):
 
@@ -322,7 +328,7 @@ async def handle_polling(client_writer, conn_token,opener, main_url):
             await asyncio.sleep(0.01)
 
 
-    log.debug('MISTER: writer closed')
+    log.warn('MISTER: writer closed')
 
 
 
@@ -347,10 +353,10 @@ async def handle_polling_client(writer, conn_token,opener, main_url):
         else:
             log.debug("VALET: no news from MISTER")
             await asyncio.sleep(0.01)
-    log.debug('VALET: writer closed')
+    log.warn('VALET: writer closed')
 
 async def fire_up_client():
-
+    # server is capable of only one connection at a time.
     while True:
         conn_token = ""
         while True:
@@ -359,19 +365,20 @@ async def fire_up_client():
                 conn_token = data[0][1]
                 delete_file(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/"+conn_token)
                 break
+            await asyncio.sleep(0.01)
             
         conn_token = conn_token.replace('.con', '')
-        log.debug("VALET: new connection from MISTER %s" % conn_token)
+        log.info("VALET: new connection from MISTER %s" % conn_token)
         
-        reader, writer = await asyncio.open_connection("127.0.0.1", 22)
-        log.debug("VALET: established server conn for %s" % conn_token)
+        reader, writer = await asyncio.open_connection("127.0.0.1", 8000)
+        log.info("VALET: established server conn for %s" % conn_token)
         
         task = asyncio.Task(handle_polling_client(writer, conn_token,opener, main_url))
 
         index = 1
         while not reader.at_eof():
             log.debug('VALET: waiting for a read from server')
-            data = await reader.read(1024)
+            data = await reader.read(BUFFER_SIZE)
 
             if reader.at_eof():
                 data = b'!' + data
@@ -385,7 +392,7 @@ async def fire_up_client():
                 ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/pck-"+str(index).zfill(8)+".bin", data)
             index += 1
 
-        log.debug('VALET: reader closed')
+        log.warn('VALET: reader closed')
 
     
 
@@ -396,7 +403,19 @@ if __name__ == '__main__':
                                   "[%(module)s:%(lineno)d] %(message)s")
     # setup console logging
 
-    lvl = logging.DEBUG
+    args = ARGS.parse_args()
+    with open(args.auth, 'r') as args.auth:
+        auth_creds = args.auth.read()
+
+    if args.quiet == 2:
+        log.error('Logging error only')
+        lvl = logging.ERROR
+    elif args.quiet == 1:
+        log.info('Logging info')
+        lvl = logging.INFO
+    elif args.quiet == 0:
+        log.info('Logging debug')
+        lvl = logging.DEBUG
 
     log.setLevel(lvl)
     ch = logging.StreamHandler()
@@ -405,10 +424,6 @@ if __name__ == '__main__':
     ch.setFormatter(formatter)
     log.addHandler(ch)
     
-
-    args = ARGS.parse_args()
-    with open(args.auth, 'r') as args.auth:
-        auth_creds = args.auth.read()
 
     ctx = ssl.create_default_context(cafile=args.cafile)
     cj = CookieJar(DefaultCookiePolicy(rfc2965=True, 
