@@ -25,8 +25,9 @@ import datetime
 import random
 
 log = logging.getLogger(__name__)
-# BUFFER_SIZE = 1024*512
+
 BUFFER_SIZE = 1024*768
+NEXT_TICK = 0.001 
 
 def encode_multipart_formdata(fields, files):
     """
@@ -60,7 +61,7 @@ def encode_multipart_formdata(fields, files):
 
 ARGS = argparse.ArgumentParser(description="ms-ff-uag-tcp")
 USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/50.0.2661.75 Safari/537.36")
+    "(KHTML, like Gecko) Chrome/50.0.2661.75 Safari/537.36") # modern UA, otherwise it thinks i'm on mobile
 
 ACCEPT = "*/*"
 
@@ -112,7 +113,6 @@ def perform_auth(opener):
     uag_dummy_repository = soup.find(id="form1").find("input", {"name": "dummy_repository"}).get("value")
     uag_repository = soup.find(id="form1").find("input", {"name": "repository"}).get("value")
 
-
     post_data = {
         "dummy_repository": uag_dummy_repository,
         "repository": uag_repository,
@@ -162,7 +162,7 @@ def put_file(opener, main_url, file, file_content):
     content_type, body = encode_multipart_formdata([
         ("remotefile", args.dir), 
         ("remotefilename", folder.replace('/', '\\').replace('\\\\', '//')), 
-        #("overwrite", "on")
+        ("overwrite", "on")
         ], [("Filedata", file, file_content)])
     
     url = urllib.request.Request(create_folder_url , body)
@@ -260,22 +260,25 @@ def get_content(opener, main_url, file):
     url.add_header("Accept", ACCEPT)
 
     r = opener.open(url)
-    doc = r.read()#.decode('utf-8', 'ignore');
+    doc = r.read()
 
     if doc.decode('cp437','ignore').find("content='0;URL=errorPage.asp?error=404") != -1:
         return None
-    #pprint(doc)
+
     return doc
 
+def gen_pck_uri(conn_token, line, index):
+    return ".ms-ff-uag-tcp-data/%s-est/line-%s/pck-%s.bin" % (conn_token, line, str(index).zfill(8))
 
-def accept_client(client_reader, client_writer):
+
+def mister_accept_client(client_reader, client_writer):
     if args.server:
         log.error("Something gone terribly wrong")
     log.info("New Connection")
-    task = asyncio.Task(handle_client(client_reader, client_writer))
+    task = asyncio.Task(mister_handle_client(client_reader, client_writer))
 
 
-async def handle_client(client_reader, client_writer):
+async def mister_handle_client(client_reader, client_writer):
 
     conn_token = datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + ('%08X' % random.randrange(16**8))
 
@@ -285,7 +288,7 @@ async def handle_client(client_reader, client_writer):
 
     put_file(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con", b'')
 
-    task = asyncio.Task(handle_polling(client_writer, conn_token,opener, main_url))
+    task = asyncio.Task(mister_poll_valet(client_writer, conn_token, opener, main_url))
     
     index = 1
     while not client_reader.at_eof():
@@ -301,18 +304,16 @@ async def handle_client(client_reader, client_writer):
         log.debug("MISTER: got a read from client")
         log.debug('MISTER: sending "%r" (%d) to VALET' % (data, len(data)))
 
-        put_file(opener, main_url, 
-            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister/pck-"+str(index).zfill(8)+".bin", data)
+        put_file(opener, main_url, gen_pck_uri(conn_token, 'mister', index), data)
         index += 1
 
     log.warn('MISTER: reader closed')
 
-async def handle_polling(client_writer, conn_token,opener, main_url):
+async def mister_poll_valet(client_writer, conn_token,opener, main_url):
 
     index = 1
     while True:
-        data = get_content(opener, main_url, 
-            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/pck-"+str(index).zfill(8)+".bin")
+        data = get_content(opener, main_url, gen_pck_uri(conn_token, 'valet', index))
         if data is not None:
             log.debug('MISTER: got data from VALET "%r" (%d b)' % (data, len(data)))
             log.debug('MISTER: relaying VALETS data')
@@ -325,20 +326,18 @@ async def handle_polling(client_writer, conn_token,opener, main_url):
             index += 1
         else:
             log.debug("MISTER: no news from VALET")
-            await asyncio.sleep(0.01)
 
+        await asyncio.sleep(NEXT_TICK) 
 
     log.warn('MISTER: writer closed')
 
 
-
-async def handle_polling_client(writer, conn_token,opener, main_url):
+async def valet_poll_mister(writer, conn_token,opener, main_url):
 
     index = 1
 
     while True:
-        data = get_content(opener, main_url, 
-            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister/pck-"+str(index).zfill(8)+".bin")
+        data = get_content(opener, main_url, gen_pck_uri(conn_token, 'mister', index))
 
         if data is not None:
             log.debug('VALET: got data from MISTER "%r" (%d b)' % (data, len(data)))
@@ -352,11 +351,14 @@ async def handle_polling_client(writer, conn_token,opener, main_url):
             index += 1
         else:
             log.debug("VALET: no news from MISTER")
-            await asyncio.sleep(0.01)
+        
+        await asyncio.sleep(NEXT_TICK)
+
     log.warn('VALET: writer closed')
 
-async def fire_up_client():
+async def valet_handle_server():
     # server is capable of only one connection at a time.
+
     while True:
         conn_token = ""
         while True:
@@ -365,7 +367,7 @@ async def fire_up_client():
                 conn_token = data[0][1]
                 delete_file(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/"+conn_token)
                 break
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(NEXT_TICK)
             
         conn_token = conn_token.replace('.con', '')
         log.info("VALET: new connection from MISTER %s" % conn_token)
@@ -373,7 +375,7 @@ async def fire_up_client():
         reader, writer = await asyncio.open_connection("127.0.0.1", 8000)
         log.info("VALET: established server conn for %s" % conn_token)
         
-        task = asyncio.Task(handle_polling_client(writer, conn_token,opener, main_url))
+        task = asyncio.Task(valet_poll_mister(writer, conn_token, opener, main_url))
 
         index = 1
         while not reader.at_eof():
@@ -388,8 +390,7 @@ async def fire_up_client():
             log.debug('VALET: got a read from server')
             log.debug('VALET: sending data to MISTER %r (%d b) ' % (data, len(data)))
 
-            put_file(opener, main_url, 
-                ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/pck-"+str(index).zfill(8)+".bin", data)
+            put_file(opener, main_url, gen_pck_uri(conn_token, 'valet', index), data)
             index += 1
 
         log.warn('VALET: reader closed')
@@ -446,9 +447,9 @@ if __name__ == '__main__':
 
 
     if args.server:
-        f = asyncio.ensure_future(fire_up_client())
+        f = asyncio.ensure_future(valet_handle_server())
     else:
-        f = asyncio.start_server(accept_client, host=None, port=8000)
+        f = asyncio.start_server(mister_accept_client, host=None, port=8000)
 
     loop.run_until_complete(f)
     loop.run_forever()
