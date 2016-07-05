@@ -135,18 +135,20 @@ def perform_auth(opener):
 
     html_doc = r.text#read().decode('utf-8', 'ignore');
 
-    new_url = re.search('window\.location\.replace\("([^"]+)"\)', html_doc).group(1)
+    if False:
+        new_url = re.search('window\.location\.replace\("([^"]+)"\)', html_doc).group(1)
 
-    logging.info(r.url)
-    logging.debug(html_doc)
+        logging.info(r.url)
+        logging.debug(html_doc)
 
-    # url = urllib.request.Request( urljoin(r.url, new_url))
-    # url.add_header("User-Agent", USER_AGENT)
-    # url.add_header("Accept", ACCEPT)
+        # url = urllib.request.Request( urljoin(r.url, new_url))
+        # url.add_header("User-Agent", USER_AGENT)
+        # url.add_header("Accept", ACCEPT)
 
-    r = opener.get(urljoin(r.url, new_url))
+        r = opener.get(urljoin(r.url, new_url))
 
-    html_doc = r.text#.read().decode('utf-8', 'ignore');
+        html_doc = r.text#.read().decode('utf-8', 'ignore');
+
     main_url = r.url
 
     logging.info(r.url)
@@ -162,21 +164,29 @@ def put_file(opener, main_url, file, file_content):
     create_folder_url = urljoin(main_url, 
         "../filesharing/FileSharingExt/ShareAccessExt.dll?P=" + folder_escaped + "&overwrite=on")
 
-    content_type, body = encode_multipart_formdata([
-        ("remotefile", args.dir), 
-        ("remotefilename", folder.replace('/', '\\').replace('\\\\', '//')), 
-        ("overwrite", "on")
-        ], [("Filedata", file, file_content)])
+    # content_type, body = encode_multipart_formdata([
+    #     ("remotefile", args.dir), 
+    #     ("remotefilename", folder.replace('/', '\\').replace('\\\\', '//')), 
+    #     ("overwrite", "on")
+    #     ], [("Filedata", file, file_content)])
     
-    url = urllib.request.Request(create_folder_url , body)
+    # url = urllib.request.Request(create_folder_url , body)
 
-    url.add_header("User-Agent", USER_AGENT)
-    url.add_header("Accept", ACCEPT)
-    url.add_header("Content-Type", content_type)
-    url.add_header("Content-Length", str(len(body)) )
+    # url.add_header("User-Agent", USER_AGENT)
+    # url.add_header("Accept", ACCEPT)
+    # url.add_header("Content-Type", content_type)
+    # url.add_header("Content-Length", str(len(body)) )
 
-    r = opener.open(url)
-    html_doc = r.read().decode('utf-8', 'ignore');
+    # r = opener.open(url)
+
+    r = opener.post(create_folder_url, files={
+        'remotefile': ('', args.dir),
+        'remotefilename': ('', folder.replace('/', '\\').replace('\\\\', '//')),
+        'overwrite': ('', 'on'),
+        'Filedata': (file, file_content),
+        })
+
+    html_doc = r.text#.read().decode('utf-8', 'ignore');
     
     return html_doc
 def create_folder(opener, main_url, folder_name):
@@ -186,20 +196,25 @@ def create_folder(opener, main_url, folder_name):
 
     create_folder_url = urljoin(main_url, "../filesharing/newfolder.asp?Folder=" + folder_escaped)
 
-    content_type, body = encode_multipart_formdata([
-        ("Filedata",folder_name), 
-        ("remotefile",args.dir), 
-        ("submit1", "Create Folder")], {})
+    # content_type, body = encode_multipart_formdata([
+    #     ("Filedata",folder_name), 
+    #     ("remotefile",args.dir), 
+    #     ("submit1", "Create Folder")], {})
 
-    url = urllib.request.Request(create_folder_url , body)
+    # url = urllib.request.Request(create_folder_url , body)
 
-    url.add_header("User-Agent", USER_AGENT)
-    url.add_header("Accept", ACCEPT)
-    url.add_header("Content-Type", content_type)
-    url.add_header("Content-Length", str(len(body)) )
+    # url.add_header("User-Agent", USER_AGENT)
+    # url.add_header("Accept", ACCEPT)
+    # url.add_header("Content-Type", content_type)
+    # url.add_header("Content-Length", str(len(body)) )
 
-    r = opener.open(url)
-    html_doc = r.read().decode('utf-8', 'ignore');
+    r = opener.post(create_folder_url, files={
+        'Filedata': ('', folder_name),
+        'remotefile': ('', args.dir),
+        'submit1': ('', 'Create Folder'),
+        })
+
+    html_doc = r.text#read().decode('utf-8', 'ignore');
 
     return html_doc
 
@@ -211,13 +226,13 @@ def list_folder(opener, main_url, folder_name):
 
     create_folder_url = urljoin(main_url, "../filesharing/filelist.asp?S=" + folder_escaped + "&T=9")
 
-    url = urllib.request.Request(create_folder_url)
+    # url = urllib.request.Request(create_folder_url)
 
-    url.add_header("User-Agent", USER_AGENT)
-    url.add_header("Accept", ACCEPT)
+    # url.add_header("User-Agent", USER_AGENT)
+    # url.add_header("Accept", ACCEPT)
 
-    r = opener.open(url)
-    html_doc = r.read().decode('utf-8', 'ignore');
+    r = opener.get(create_folder_url)
+    html_doc = r.text#read().decode('utf-8', 'ignore');
 
 
     soup = BeautifulSoup(html_doc, 'html.parser')
@@ -240,13 +255,13 @@ def delete_file(opener, main_url, file):
     create_folder_url = urljoin(main_url, 
         "../filesharing/filelist.asp?S=" + folder_escaped + "&action=1&T=9")
 
-    url = urllib.request.Request(create_folder_url)
+    # url = urllib.request.Request(create_folder_url)
 
-    url.add_header("User-Agent", USER_AGENT)
-    url.add_header("Accept", ACCEPT)
+    # url.add_header("User-Agent", USER_AGENT)
+    # url.add_header("Accept", ACCEPT)
 
-    r = opener.open(url)
-    html_doc = r.read().decode('utf-8', 'ignore');
+    r = opener.get(create_folder_url)
+    html_doc = r.text#read().decode('utf-8', 'ignore');
 
     return html_doc
 
@@ -257,15 +272,15 @@ def get_content(opener, main_url, file):
 
     create_folder_url = urljoin(main_url, "../filesharing/FileSharingExt/?OPEN&P=" + folder_escaped)
 
-    url = urllib.request.Request(create_folder_url)
+    # url = urllib.request.Request(create_folder_url)
 
-    url.add_header("User-Agent", USER_AGENT)
-    url.add_header("Accept", ACCEPT)
+    # url.add_header("User-Agent", USER_AGENT)
+    # url.add_header("Accept", ACCEPT)
 
-    r = opener.open(url)
-    doc = r.read()
+    r = opener.get(create_folder_url)
+    doc = r.content#read()
 
-    if doc.decode('cp437','ignore').find("content='0;URL=errorPage.asp?error=404") != -1:
+    if r.text.find("content='0;URL=errorPage.asp?error=404") != -1:
         return None
 
     return doc
@@ -449,27 +464,27 @@ if __name__ == '__main__':
 
     main_url = perform_auth(opener)
 
-    # loop = asyncio.get_event_loop()
+    loop = asyncio.get_event_loop()
 
-    # if signal is not None and sys.platform != 'win32':
-    #     loop.add_signal_handler(signal.SIGINT, loop.stop)
+    if signal is not None and sys.platform != 'win32':
+        loop.add_signal_handler(signal.SIGINT, loop.stop)
 
 
-    # if args.server:
-    #     f = asyncio.ensure_future(valet_handle_server())
-    # else:
-    #     f = asyncio.start_server(mister_accept_client, host=None, port=8000)
+    if args.server:
+        f = asyncio.ensure_future(valet_handle_server())
+    else:
+        f = asyncio.start_server(mister_accept_client, host=None, port=8000)
 
-    # loop.run_until_complete(f)
-    # loop.run_forever()
+    loop.run_until_complete(f)
+    loop.run_forever()
     
 
 
 
-
-    #create_folder(opener, main_url, 'testing-folders')
+    # todo: unit tests 
+    #create_folder(opener, main_url, 'testing-folders-hellow')
     #pprint(list_folder(opener, main_url, ''))
     #pprint(get_content(opener, main_url, 'ms-ff-uag-tcp.md'))
-    #put_file(opener, main_url, '00000000.bin', b'SSH-2.0-OpenSSH_6.7p1 Debian-5+deb8u2\r\n')
-    #delete_file(opener, main_url, 'testing-132-folders')
+    #put_file(opener, main_url, 'testing-file.txt', b'what could go wrong')
+    #delete_file(opener, main_url, 'testing-file')
     
