@@ -26,6 +26,7 @@ import datetime
 import random
 
 log = logging.getLogger(__name__)
+opener = None
 
 BUFFER_SIZE = 1024*768
 NEXT_TICK = 0.001 
@@ -95,13 +96,17 @@ ARGS.add_argument(
     default=0, type=int, help="Don't show debug info")
 
 
-
+from requests_toolbelt.utils import dump
 def perform_auth(opener):
     #url = urllib.request.Request("https://" + args.domain + "/")
     #url.add_header("User-Agent", USER_AGENT)
     #url.add_header("Accept", ACCEPT)
+    #r=opener.Request('get', "https://" + args.domain + "/")
+    #pprint(r.headers)
 
     r = opener.get("https://" + args.domain + "/")
+    #pprint(dump.dump_all(r).decode('utf-8'))
+
     #pprint(r.text)
     #pprint(r.content)
     login_url = r.url
@@ -156,6 +161,8 @@ def perform_auth(opener):
 
     return main_url
 
+from collections import OrderedDict
+
 def put_file(opener, main_url, file, file_content):
     
     folder = args.dir + "/" + file
@@ -178,16 +185,21 @@ def put_file(opener, main_url, file, file_content):
     # url.add_header("Content-Length", str(len(body)) )
 
     # r = opener.open(url)
+    def print_url(r, *args, **kwargs):
+        #pprint(r.headers)
+        r.headers.update({'Connection':None})
+        #pprint(r.headers)
 
-    r = opener.post(create_folder_url, files={
-        'remotefile': ('', args.dir),
-        'remotefilename': ('', folder.replace('/', '\\').replace('\\\\', '//')),
-        'overwrite': ('', 'on'),
-        'Filedata': (file, file_content),
-        })
+    r = opener.post(create_folder_url, files=OrderedDict([
+        ('Filedata', (file, file_content)),
+        ('remotefile', ('', args.dir)),
+        ('remotefilename', ('', folder.replace('/', '\\').replace('\\\\', '//'))),
+        ('overwrite', ('', "on")),
+        ]), allow_redirects=False,hooks=dict(response=print_url),timeout=None)
 
     html_doc = r.text#.read().decode('utf-8', 'ignore');
     
+    #print(dump.dump_all(r).decode('utf-8'))
     return html_doc
 def create_folder(opener, main_url, folder_name):
     
@@ -447,6 +459,13 @@ if __name__ == '__main__':
     opener = requests.session()
     opener.verify = args.cafile
     opener.headers.update({'User-Agent': USER_AGENT})
+    opener.headers.update({'Accept': ACCEPT})
+    #opener.headers.update({'Connection': None})
+
+    adapter = requests.adapters.HTTPAdapter(pool_connections=100, pool_maxsize=100)
+    opener.mount('https://', adapter)
+
+
 
     #opener.cert = args.cafile
 
@@ -481,10 +500,17 @@ if __name__ == '__main__':
 
 
 
+    # when the connection gets reset:
+    # put contents, get contents
+
+    # When not:
+    # list folder, delete file, create folder
+
+
     # todo: unit tests 
     #create_folder(opener, main_url, 'testing-folders-hellow')
     #pprint(list_folder(opener, main_url, ''))
     #pprint(get_content(opener, main_url, 'ms-ff-uag-tcp.md'))
-    #put_file(opener, main_url, 'testing-file.txt', b'what could go wrong')
-    #delete_file(opener, main_url, 'testing-file')
+    #put_file(opener, main_url, 'testing-file.txt', b'??what could go wrong')
     
+    #delete_file(opener, main_url, 'testing-file.txt')
