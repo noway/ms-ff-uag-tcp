@@ -37,8 +37,10 @@ def encode_multipart_formdata(fields, files):
     L = []
     for (key, filename, value) in files:
         L.append(b'--' + BOUNDARY)
-        L.append(b'Content-Disposition: form-data; name="%b"; filename="%b"' % (bytes(key,'ascii'), bytes(filename,'ascii')))
-        L.append(b'Content-Type: %b' % bytes((mimetypes.guess_type(filename)[0] or 'application/octet-stream'), 'ascii') )
+        L.append(b'Content-Disposition: form-data; name="%b"; filename="%b"' % 
+            (bytes(key,'ascii'), bytes(filename,'ascii')))
+        L.append(b'Content-Type: %b' % 
+            bytes((mimetypes.guess_type(filename)[0] or 'application/octet-stream'), 'ascii') )
         L.append(b'')
         L.append(value)
     for (key, value) in fields:
@@ -55,7 +57,9 @@ def encode_multipart_formdata(fields, files):
 
 
 ARGS = argparse.ArgumentParser(description="ms-ff-uag-tcp")
-USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.75 Safari/537.36"
+USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/50.0.2661.75 Safari/537.36")
+
 ACCEPT = "*/*"
 
 
@@ -69,7 +73,8 @@ ARGS.add_argument(
 
 ARGS.add_argument(
     '--auth', action="store", dest='auth',
-    default='creds/auth.txt', type=str, help='Username and password in plaintext separated by a new line')
+    default='creds/auth.txt', type=str, 
+    help='Username and password in plaintext separated by a new line')
 
 ARGS.add_argument(
     '--dir', action="store", dest='dir',
@@ -145,9 +150,13 @@ def put_file(opener, main_url, file, file_content):
     folder = args.dir + "/" + file
     folder_escaped = quote(folder, safe='')
 
-    create_folder_url = urljoin(main_url, "../filesharing/FileSharingExt/ShareAccessExt.dll?P=" + folder_escaped + "&overwrite=on")
+    create_folder_url = urljoin(main_url, 
+        "../filesharing/FileSharingExt/ShareAccessExt.dll?P=" + folder_escaped + "&overwrite=on")
 
-    content_type, body = encode_multipart_formdata([("remotefile", args.dir), ("remotefilename", folder.replace('/', '\\').replace('\\\\', '//')), ("overwrite", "on")], [("Filedata", file, file_content)])
+    content_type, body = encode_multipart_formdata([
+        ("remotefile", args.dir), 
+        ("remotefilename", folder.replace('/', '\\').replace('\\\\', '//')), 
+        ("overwrite", "on")], [("Filedata", file, file_content)])
     
     url = urllib.request.Request(create_folder_url , body)
 
@@ -167,7 +176,10 @@ def create_folder(opener, main_url, folder_name):
 
     create_folder_url = urljoin(main_url, "../filesharing/newfolder.asp?Folder=" + folder_escaped)
 
-    content_type, body = encode_multipart_formdata([("Filedata",folder_name), ("remotefile",args.dir), ("submit1", "Create Folder")], {})
+    content_type, body = encode_multipart_formdata([
+        ("Filedata",folder_name), 
+        ("remotefile",args.dir), 
+        ("submit1", "Create Folder")], {})
 
     url = urllib.request.Request(create_folder_url , body)
 
@@ -215,7 +227,8 @@ def delete_file(opener, main_url, file):
     folder = args.dir + "/" + file
     folder_escaped = quote(folder, safe='')
 
-    create_folder_url = urljoin(main_url, "../filesharing/filelist.asp?S=" + folder_escaped + "&action=1&T=9")
+    create_folder_url = urljoin(main_url, 
+        "../filesharing/filelist.asp?S=" + folder_escaped + "&action=1&T=9")
 
     url = urllib.request.Request(create_folder_url)
 
@@ -242,8 +255,8 @@ def get_content(opener, main_url, file):
     r = opener.open(url)
     doc = r.read()#.decode('utf-8', 'ignore');
 
-    if doc.decode('utf-8','ignore').find("content='0;URL=errorPage.asp?error=404") != -1:
-        return ""
+    if doc.decode('cp437','ignore').find("content='0;URL=errorPage.asp?error=404") != -1:
+        return None
     pprint(doc)
     return doc
 
@@ -266,37 +279,52 @@ async def handle_client(client_reader, client_writer):
     
     i = 0
     while True:
-        log.debug("waiting for read from client")
-        data = await client_reader.read(64)
-        log.debug("got data")
-        log.debug("putting %s to line-client" % data.decode('utf-8'))
-        put_file(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-client/"+str(i).zfill(8)+".bin", data)
+        log.debug("MISTER: waiting for read from client")
+        data = await client_reader.read(1024)
+        log.debug("MISTER: got a read from client")
+        log.debug('MISTER: sending "%b" (%d) to VALET' % (data, len(data)))
+
+        put_file(opener, main_url, 
+            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-client/"+str(i).zfill(8)+".bin", data)
         i += 1
 
 async def handle_polling(client_writer, conn_token,opener, main_url):
 
     i = 0
     while True:
-        data = get_content(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-server/"+str(i).zfill(8)+".bin")
-        if data is not "":
+        data = get_content(opener, main_url, 
+            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-server/"+str(i).zfill(8)+".bin")
+        if data is not None:
+            log.debug('MISTER: got data from VALET "%b" (%d b)' % (data, len(data)))
+            log.debug('MISTER: relaying VALETS data')
+
             client_writer.write(data)
             i += 1
         else:
-            log.debug("sleeping in line-server uag listener")
+            log.debug("MISTER: no news from VALET")
             await asyncio.sleep(0.01)
+
+
+
+
 
 async def handle_polling_client(writer, conn_token,opener, main_url):
 
     i = 0
-    log.debug("conn_token is "+conn_token)
+
     while True:
-        data = get_content(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-client/"+str(i).zfill(8)+".bin")
-        if data is not "":
-            log.debug("got " + data.decode("utf-8")+" data")
+        log.debug("VALET: queriying for data from MISTER")
+
+        data = get_content(opener, main_url, 
+            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-client/"+str(i).zfill(8)+".bin")
+        if data is not None:
+            log.debug('VALET: got data from MISTER "%b" (%d b)' % (data, len(data)))
+            log.debug('VALET: relaying MISTERS data')
+
             writer.write(data)
             i += 1
         else:
-            log.debug("sleeping in line-client uag listener")
+            log.debug("VALET: no news from MISTER")
             await asyncio.sleep(0.01)
 
 async def fire_up_client():
@@ -310,19 +338,26 @@ async def fire_up_client():
             break
         
     conn_token = conn_token.replace('.con', '')
+    log.debug("VALET: new connection from MISTER %s" % conn_token)
     
-    reader, writer = await asyncio.open_connection("127.0.0.1", 8001)
+    reader, writer = await asyncio.open_connection("127.0.0.1", 22)
+    log.debug("VALET: established server conn for %s" % conn_token)
     
     task = asyncio.Task(handle_polling_client(writer, conn_token,opener, main_url))
-    i=0
+    i = 0
     while True:
-        log.debug("waiting for read from server")
-        data = await reader.read(64)
-        log.debug("got data")
-        log.debug("putting %s to line-server" % data.decode('utf-8'))
-        put_file(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-server/"+str(i).zfill(8)+".bin", data)
+        log.debug('VALET: waiting for a read from server')
+        data = await reader.read(1024)
+
+        log.debug('VALET: got a read from server')
+
+        log.debug('VALET: sending data to MISTER "%b" (%d b) ' % (data, len(data)))
+        put_file(opener, main_url, 
+            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-server/"+str(i).zfill(8)+".bin", data)
         i += 1
     
+
+
     
 
 if __name__ == '__main__':
@@ -332,8 +367,10 @@ if __name__ == '__main__':
         auth_creds = args.auth.read()
 
     ctx = ssl.create_default_context(cafile=args.cafile)
-    cj = CookieJar(DefaultCookiePolicy(rfc2965=True, strict_ns_domain=DefaultCookiePolicy.DomainStrict, blocked_domains=["ads.net", ".ads.net"]))
-    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), urllib.request.HTTPCookieProcessor(cj))
+    cj = CookieJar(DefaultCookiePolicy(rfc2965=True, 
+        strict_ns_domain=DefaultCookiePolicy.DomainStrict, blocked_domains=["ads.net", ".ads.net"]))
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), 
+        urllib.request.HTTPCookieProcessor(cj))
 
     main_url = perform_auth(opener)
 
