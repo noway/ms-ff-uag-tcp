@@ -126,18 +126,18 @@ def perform_auth(opener):
     r = opener.open(url)
 
     html_doc = r.read().decode('utf-8', 'ignore');
-    new_url = re.search('window\.location\.replace\("([^"]+)"\)', html_doc).group(1)
+    # new_url = re.search('window\.location\.replace\("([^"]+)"\)', html_doc).group(1)
 
-    logging.debug(r.url)
-    #logging.debug(html_doc)
+    # logging.debug(r.url)
+    # #logging.debug(html_doc)
 
-    url = urllib.request.Request( urljoin(r.url, new_url))
-    url.add_header("User-Agent", USER_AGENT)
-    url.add_header("Accept", ACCEPT)
+    # url = urllib.request.Request( urljoin(r.url, new_url))
+    # url.add_header("User-Agent", USER_AGENT)
+    # url.add_header("Accept", ACCEPT)
 
-    r = opener.open(url)
+    # r = opener.open(url)
 
-    html_doc = r.read().decode('utf-8', 'ignore');
+    # html_doc = r.read().decode('utf-8', 'ignore');
 
     main_url = r.url
     logging.debug(r.url)
@@ -351,59 +351,45 @@ async def handle_polling_client(writer, conn_token,opener, main_url):
 
 async def fire_up_client():
 
-    conn_token = ""
     while True:
-        data = list_folder(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/")
-        if len(data):
-            conn_token = data[0][1]
-            delete_file(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/"+conn_token)
-            break
+        conn_token = ""
+        while True:
+            data = list_folder(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/")
+            if len(data):
+                conn_token = data[0][1]
+                delete_file(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/"+conn_token)
+                break
+            
+        conn_token = conn_token.replace('.con', '')
+        log.debug("VALET: new connection from MISTER %s" % conn_token)
         
-    conn_token = conn_token.replace('.con', '')
-    log.debug("VALET: new connection from MISTER %s" % conn_token)
-    
-    reader, writer = await asyncio.open_connection("127.0.0.1", 22)
-    log.debug("VALET: established server conn for %s" % conn_token)
-    
-    task = asyncio.Task(handle_polling_client(writer, conn_token,opener, main_url))
+        reader, writer = await asyncio.open_connection("127.0.0.1", 22)
+        log.debug("VALET: established server conn for %s" % conn_token)
+        
+        task = asyncio.Task(handle_polling_client(writer, conn_token,opener, main_url))
 
-    index = 1
-    while not reader.at_eof():
-        log.debug('VALET: waiting for a read from server')
-        data = await reader.read(1024)
+        index = 1
+        while not reader.at_eof():
+            log.debug('VALET: waiting for a read from server')
+            data = await reader.read(1024)
 
-        if reader.at_eof():
-            data = b'!' + data
-        else:
-            data = b' ' + data
+            if reader.at_eof():
+                data = b'!' + data
+            else:
+                data = b' ' + data
 
-        log.debug('VALET: got a read from server')
-        log.debug('VALET: sending data to MISTER %r (%d b) ' % (data, len(data)))
+            log.debug('VALET: got a read from server')
+            log.debug('VALET: sending data to MISTER %r (%d b) ' % (data, len(data)))
 
-        put_file(opener, main_url, 
-            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/pck-"+str(index).zfill(8)+".bin", data)
-        index += 1
+            put_file(opener, main_url, 
+                ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/pck-"+str(index).zfill(8)+".bin", data)
+            index += 1
 
-    log.debug('VALET: reader closed')
+        log.debug('VALET: reader closed')
 
     
 
 if __name__ == '__main__':
-
-    args = ARGS.parse_args()
-    with open(args.auth, 'r') as args.auth:
-        auth_creds = args.auth.read()
-
-    ctx = ssl.create_default_context(cafile=args.cafile)
-    cj = CookieJar(DefaultCookiePolicy(rfc2965=True, 
-        strict_ns_domain=DefaultCookiePolicy.DomainStrict, blocked_domains=["ads.net", ".ads.net"]))
-    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), 
-        urllib.request.HTTPCookieProcessor(cj))
-
-    main_url = perform_auth(opener)
-
-
-
 
     log = logging.getLogger("")
     formatter = logging.Formatter("%(asctime)s %(levelname)s " +
@@ -419,8 +405,24 @@ if __name__ == '__main__':
     ch.setFormatter(formatter)
     log.addHandler(ch)
     
+
+    args = ARGS.parse_args()
+    with open(args.auth, 'r') as args.auth:
+        auth_creds = args.auth.read()
+
+    ctx = ssl.create_default_context(cafile=args.cafile)
+    cj = CookieJar(DefaultCookiePolicy(rfc2965=True, 
+        strict_ns_domain=DefaultCookiePolicy.DomainStrict, blocked_domains=["ads.net", ".ads.net"]))
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), 
+        urllib.request.HTTPCookieProcessor(cj))
+
+
+
+
+
     
 
+    main_url = perform_auth(opener)
 
     loop = asyncio.get_event_loop()
 
@@ -434,7 +436,7 @@ if __name__ == '__main__':
         f = asyncio.start_server(accept_client, host=None, port=8000)
 
     loop.run_until_complete(f)
-    # loop.run_forever()
+    loop.run_forever()
     
 
 
