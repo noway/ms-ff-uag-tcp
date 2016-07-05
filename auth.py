@@ -276,39 +276,47 @@ async def handle_client(client_reader, client_writer):
     create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est") # not like in spec
     create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister") # not like in spec
     create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet") # not like in spec
+
     put_file(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con", b'')
 
     task = asyncio.Task(handle_polling(client_writer, conn_token,opener, main_url))
     
-    i_put = 1
-    while True:
+    index = 1
+    while not client_reader.at_eof():
         log.debug("MISTER: waiting for read from client")
+
         data = await client_reader.read(1024)
+
+        if client_reader.at_eof():
+            data.insert(0, b'!')
+        else:
+            data.insert(0, b' ')
+
         log.debug("MISTER: got a read from client")
         log.debug('MISTER: sending "%r" (%d) to VALET' % (data, len(data)))
 
         put_file(opener, main_url, 
-            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister/pck-"+str(i_put).zfill(8)+".bin", data)
-        i_put += 1
+            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister/pck-"+str(index).zfill(8)+".bin", data)
+        index += 1
 
 async def handle_polling(client_writer, conn_token,opener, main_url):
 
-    i_get = 1
+    index = 1
     while True:
         data = get_content(opener, main_url, 
-            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/pck-"+str(i_get).zfill(8)+".bin")
+            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/pck-"+str(index).zfill(8)+".bin")
         if data is not None:
             log.debug('MISTER: got data from VALET "%r" (%d b)' % (data, len(data)))
             log.debug('MISTER: relaying VALETS data')
 
-            client_writer.write(data)
-            i_get += 1
+            if data[0] == b'!':
+                client_writer.write_eof()
+                break
+            else:
+                client_writer.write(data[1:])
+            index += 1
         else:
             log.debug("MISTER: no news from VALET")
-            # log.debug("%s, %d, %s, %s" % (conn_token, 
-            #     i_get,  
-            #     ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/"+str(i_get).zfill(8)+".bin",
-            #     main_url))
             await asyncio.sleep(0.01)
 
 
@@ -317,17 +325,22 @@ async def handle_polling(client_writer, conn_token,opener, main_url):
 
 async def handle_polling_client(writer, conn_token,opener, main_url):
 
-    i_get = 1
+    index = 1
 
     while True:
         data = get_content(opener, main_url, 
-            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister/pck-"+str(i_get).zfill(8)+".bin")
+            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister/pck-"+str(index).zfill(8)+".bin")
+
         if data is not None:
             log.debug('VALET: got data from MISTER "%r" (%d b)' % (data, len(data)))
             log.debug('VALET: relaying MISTERS data')
 
-            writer.write(data)
-            i_get += 1
+            if data[0] == b'!':
+                writer.write_eof()
+                break
+            else:
+                writer.write(data[1:])
+            index += 1
         else:
             log.debug("VALET: no news from MISTER")
             await asyncio.sleep(0.01)
@@ -349,18 +362,23 @@ async def fire_up_client():
     log.debug("VALET: established server conn for %s" % conn_token)
     
     task = asyncio.Task(handle_polling_client(writer, conn_token,opener, main_url))
-    i_put = 1
-    while True:
+
+    index = 1
+    while not reader.at_eof():
         log.debug('VALET: waiting for a read from server')
         data = await reader.read(1024)
 
-        log.debug('VALET: got a read from server')
+        if reader.at_eof():
+            data.insert(0, b'!')
+        else:
+            data.insert(0, b' ')
 
-        log.debug('VALET: sending data to MISTER "%r" (%d b) ' % (data, len(data)))
+        log.debug('VALET: got a read from server')
+        log.debug('VALET: sending data to MISTER %r (%d b) ' % (data, len(data)))
+
         put_file(opener, main_url, 
-            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/pck-"+str(i_put).zfill(8)+".bin", data)
-        i_put += 1
-    
+            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/pck-"+str(index).zfill(8)+".bin", data)
+        index += 1
 
 
     
