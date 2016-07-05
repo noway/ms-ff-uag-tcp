@@ -26,7 +26,7 @@ import random
 
 log = logging.getLogger(__name__)
 # BUFFER_SIZE = 1024*512
-BUFFER_SIZE = 1024*256
+BUFFER_SIZE = 1024*768
 
 def encode_multipart_formdata(fields, files):
     """
@@ -264,7 +264,7 @@ def get_content(opener, main_url, file):
 
     if doc.decode('cp437','ignore').find("content='0;URL=errorPage.asp?error=404") != -1:
         return None
-    pprint(doc)
+    #pprint(doc)
     return doc
 
 
