@@ -156,7 +156,8 @@ def put_file(opener, main_url, file, file_content):
     content_type, body = encode_multipart_formdata([
         ("remotefile", args.dir), 
         ("remotefilename", folder.replace('/', '\\').replace('\\\\', '//')), 
-        ("overwrite", "on")], [("Filedata", file, file_content)])
+        #("overwrite", "on")
+        ], [("Filedata", file, file_content)])
     
     url = urllib.request.Request(create_folder_url , body)
 
@@ -167,7 +168,7 @@ def put_file(opener, main_url, file, file_content):
 
     r = opener.open(url)
     html_doc = r.read().decode('utf-8', 'ignore');
-
+    
     return html_doc
 def create_folder(opener, main_url, folder_name):
     
@@ -262,6 +263,8 @@ def get_content(opener, main_url, file):
 
 
 def accept_client(client_reader, client_writer):
+    if args.server:
+        log.error("Something gone terribly wrong")
     log.info("New Connection")
     task = asyncio.Task(handle_client(client_reader, client_writer))
 
@@ -270,38 +273,42 @@ async def handle_client(client_reader, client_writer):
 
     conn_token = datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + ('%08X' % random.randrange(16**8))
 
-    put_file(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con", b'')
     create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est") # not like in spec
-    create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-client") # not like in spec
-    create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-server") # not like in spec
+    create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister") # not like in spec
+    create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet") # not like in spec
+    put_file(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con", b'')
 
     task = asyncio.Task(handle_polling(client_writer, conn_token,opener, main_url))
     
-    i = 0
+    i_put = 1
     while True:
         log.debug("MISTER: waiting for read from client")
         data = await client_reader.read(1024)
         log.debug("MISTER: got a read from client")
-        log.debug('MISTER: sending "%b" (%d) to VALET' % (data, len(data)))
+        log.debug('MISTER: sending "%r" (%d) to VALET' % (data, len(data)))
 
         put_file(opener, main_url, 
-            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-client/"+str(i).zfill(8)+".bin", data)
-        i += 1
+            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister/pck-"+str(i_put).zfill(8)+".bin", data)
+        i_put += 1
 
 async def handle_polling(client_writer, conn_token,opener, main_url):
 
-    i = 0
+    i_get = 1
     while True:
         data = get_content(opener, main_url, 
-            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-server/"+str(i).zfill(8)+".bin")
+            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/pck-"+str(i_get).zfill(8)+".bin")
         if data is not None:
-            log.debug('MISTER: got data from VALET "%b" (%d b)' % (data, len(data)))
+            log.debug('MISTER: got data from VALET "%r" (%d b)' % (data, len(data)))
             log.debug('MISTER: relaying VALETS data')
 
             client_writer.write(data)
-            i += 1
+            i_get += 1
         else:
             log.debug("MISTER: no news from VALET")
+            # log.debug("%s, %d, %s, %s" % (conn_token, 
+            #     i_get,  
+            #     ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/"+str(i_get).zfill(8)+".bin",
+            #     main_url))
             await asyncio.sleep(0.01)
 
 
@@ -310,19 +317,17 @@ async def handle_polling(client_writer, conn_token,opener, main_url):
 
 async def handle_polling_client(writer, conn_token,opener, main_url):
 
-    i = 0
+    i_get = 1
 
     while True:
-        log.debug("VALET: queriying for data from MISTER")
-
         data = get_content(opener, main_url, 
-            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-client/"+str(i).zfill(8)+".bin")
+            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister/pck-"+str(i_get).zfill(8)+".bin")
         if data is not None:
-            log.debug('VALET: got data from MISTER "%b" (%d b)' % (data, len(data)))
+            log.debug('VALET: got data from MISTER "%r" (%d b)' % (data, len(data)))
             log.debug('VALET: relaying MISTERS data')
 
             writer.write(data)
-            i += 1
+            i_get += 1
         else:
             log.debug("VALET: no news from MISTER")
             await asyncio.sleep(0.01)
@@ -344,17 +349,17 @@ async def fire_up_client():
     log.debug("VALET: established server conn for %s" % conn_token)
     
     task = asyncio.Task(handle_polling_client(writer, conn_token,opener, main_url))
-    i = 0
+    i_put = 1
     while True:
         log.debug('VALET: waiting for a read from server')
         data = await reader.read(1024)
 
         log.debug('VALET: got a read from server')
 
-        log.debug('VALET: sending data to MISTER "%b" (%d b) ' % (data, len(data)))
+        log.debug('VALET: sending data to MISTER "%r" (%d b) ' % (data, len(data)))
         put_file(opener, main_url, 
-            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-server/"+str(i).zfill(8)+".bin", data)
-        i += 1
+            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/pck-"+str(i_put).zfill(8)+".bin", data)
+        i_put += 1
     
 
 
@@ -415,6 +420,6 @@ if __name__ == '__main__':
     #create_folder(opener, main_url, 'testing-folders')
     #pprint(list_folder(opener, main_url, ''))
     #pprint(get_content(opener, main_url, 'ms-ff-uag-tcp.md'))
-    #put_file(opener, main_url, 'test.txt', 'hello world')
+    #put_file(opener, main_url, '00000000.bin', b'SSH-2.0-OpenSSH_6.7p1 Debian-5+deb8u2\r\n')
     #delete_file(opener, main_url, 'testing-132-folders')
     
