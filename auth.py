@@ -97,8 +97,8 @@ def perform_auth(opener):
 
     login_url = r.url
     html_doc = r.read().decode('utf-8')
-    print(login_url)
-    print(html_doc)
+    logging.debug(login_url)
+    #logging.debug(html_doc)
 
     soup = BeautifulSoup(html_doc, 'html.parser')
     post_url = soup.find(id="form1").get("action")
@@ -128,8 +128,8 @@ def perform_auth(opener):
     html_doc = r.read().decode('utf-8', 'ignore');
     new_url = re.search('window\.location\.replace\("([^"]+)"\)', html_doc).group(1)
 
-    print(r.url)
-    print(html_doc)
+    logging.debug(r.url)
+    #logging.debug(html_doc)
 
     url = urllib.request.Request( urljoin(r.url, new_url))
     url.add_header("User-Agent", USER_AGENT)
@@ -140,8 +140,8 @@ def perform_auth(opener):
     html_doc = r.read().decode('utf-8', 'ignore');
 
     main_url = r.url
-    print(r.url)
-    print(html_doc)
+    logging.debug(r.url)
+    #logging.debug(html_doc)
 
     return main_url
 
@@ -288,9 +288,9 @@ async def handle_client(client_reader, client_writer):
         data = await client_reader.read(1024)
 
         if client_reader.at_eof():
-            data.insert(0, b'!')
+            data = b'!' + data
         else:
-            data.insert(0, b' ')
+            data = b' ' + data
 
         log.debug("MISTER: got a read from client")
         log.debug('MISTER: sending "%r" (%d) to VALET' % (data, len(data)))
@@ -298,6 +298,8 @@ async def handle_client(client_reader, client_writer):
         put_file(opener, main_url, 
             ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister/pck-"+str(index).zfill(8)+".bin", data)
         index += 1
+
+    log.debug('MISTER: reader closed')
 
 async def handle_polling(client_writer, conn_token,opener, main_url):
 
@@ -309,7 +311,7 @@ async def handle_polling(client_writer, conn_token,opener, main_url):
             log.debug('MISTER: got data from VALET "%r" (%d b)' % (data, len(data)))
             log.debug('MISTER: relaying VALETS data')
 
-            if data[0] == b'!':
+            if data[0] == b'!'[0]:
                 client_writer.write_eof()
                 break
             else:
@@ -320,6 +322,7 @@ async def handle_polling(client_writer, conn_token,opener, main_url):
             await asyncio.sleep(0.01)
 
 
+    log.debug('MISTER: writer closed')
 
 
 
@@ -335,7 +338,7 @@ async def handle_polling_client(writer, conn_token,opener, main_url):
             log.debug('VALET: got data from MISTER "%r" (%d b)' % (data, len(data)))
             log.debug('VALET: relaying MISTERS data')
 
-            if data[0] == b'!':
+            if data[0] == b'!'[0]:
                 writer.write_eof()
                 break
             else:
@@ -344,6 +347,7 @@ async def handle_polling_client(writer, conn_token,opener, main_url):
         else:
             log.debug("VALET: no news from MISTER")
             await asyncio.sleep(0.01)
+    log.debug('VALET: writer closed')
 
 async def fire_up_client():
 
@@ -369,9 +373,9 @@ async def fire_up_client():
         data = await reader.read(1024)
 
         if reader.at_eof():
-            data.insert(0, b'!')
+            data = b'!' + data
         else:
-            data.insert(0, b' ')
+            data = b' ' + data
 
         log.debug('VALET: got a read from server')
         log.debug('VALET: sending data to MISTER %r (%d b) ' % (data, len(data)))
@@ -380,6 +384,7 @@ async def fire_up_client():
             ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/pck-"+str(index).zfill(8)+".bin", data)
         index += 1
 
+    log.debug('VALET: reader closed')
 
     
 
@@ -429,7 +434,7 @@ if __name__ == '__main__':
         f = asyncio.start_server(accept_client, host=None, port=8000)
 
     loop.run_until_complete(f)
-    loop.run_forever()
+    # loop.run_forever()
     
 
 
