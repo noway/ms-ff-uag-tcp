@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import asyncio
+import requests
 try:
     import signal
 except ImportError:
@@ -28,35 +29,6 @@ log = logging.getLogger(__name__)
 
 BUFFER_SIZE = 1024*768
 NEXT_TICK = 0.001 
-
-def encode_multipart_formdata(fields, files):
-    """
-    fields is a sequence of (name, value) elements for regular form fields.
-    files is a sequence of (name, filename, value) elements for data to be uploaded as files
-    Return (content_type, body) ready for httplib.HTTP instance
-    """
-    BOUNDARY = bytes(email.generator._make_boundary().replace('=','-'), 'ascii')
-    CRLF = b'\r\n'
-    L = []
-    for (key, filename, value) in files:
-        L.append(b'--' + BOUNDARY)
-        L.append(b'Content-Disposition: form-data; name="%b"; filename="%b"' % 
-            (bytes(key,'ascii'), bytes(filename,'ascii')))
-        L.append(b'Content-Type: %b' % 
-            bytes((mimetypes.guess_type(filename)[0] or 'application/octet-stream'), 'ascii') )
-        L.append(b'')
-        L.append(value)
-    for (key, value) in fields:
-        L.append(b'--' + BOUNDARY)
-        L.append(b'Content-Disposition: form-data; name="%b"' % bytes(key,'ascii'))
-        L.append(b'')
-        L.append(bytes(value,'ascii'))
-    L.append(b'--' + BOUNDARY + b'--')
-    L.append(b'')
-    
-    body = CRLF.join(L)
-    content_type = 'multipart/form-data; boundary=%s' % BOUNDARY
-    return content_type, body#.encode('utf-8')
 
 
 ARGS = argparse.ArgumentParser(description="ms-ff-uag-tcp")
@@ -159,11 +131,11 @@ def put_file(opener, main_url, file, file_content):
     create_folder_url = urljoin(main_url, 
         "../filesharing/FileSharingExt/ShareAccessExt.dll?P=" + folder_escaped + "&overwrite=on")
 
-    content_type, body = encode_multipart_formdata([
-        ("remotefile", args.dir), 
-        ("remotefilename", folder.replace('/', '\\').replace('\\\\', '//')), 
-        ("overwrite", "on")
-        ], [("Filedata", file, file_content)])
+    (body, content_type) = requests.models.RequestEncodingMixin._encode_files([
+        ("Filedata", (file, file_content)),
+        ("remotefile", ('', args.dir)), 
+        ("remotefilename", ('', folder.replace('/', '\\').replace('\\\\', '//'))), 
+        ("overwrite", ('', "on"))], [])
     
     url = urllib.request.Request(create_folder_url , body)
 
@@ -173,9 +145,10 @@ def put_file(opener, main_url, file, file_content):
     url.add_header("Content-Length", str(len(body)) )
 
     r = opener.open(url)
-    html_doc = r.read().decode('utf-8', 'ignore');
-    
-    return html_doc
+    #html_doc = r.read().decode('utf-8', 'ignore');
+    #return html_doc
+    return b'ok'
+
 def create_folder(opener, main_url, folder_name):
     
     folder = args.dir + "/" + folder_name
@@ -183,10 +156,10 @@ def create_folder(opener, main_url, folder_name):
 
     create_folder_url = urljoin(main_url, "../filesharing/newfolder.asp?Folder=" + folder_escaped)
 
-    content_type, body = encode_multipart_formdata([
-        ("Filedata",folder_name), 
-        ("remotefile",args.dir), 
-        ("submit1", "Create Folder")], {})
+    (body, content_type) = requests.models.RequestEncodingMixin._encode_files([
+        ("Filedata", ('', folder_name)),
+        ("remotefile", ('', args.dir)), 
+        ("submit1", ('', "Create Folder"))], [])
 
     url = urllib.request.Request(create_folder_url , body)
 
@@ -260,12 +233,12 @@ def get_content(opener, main_url, file):
     url.add_header("Accept", ACCEPT)
 
     r = opener.open(url)
-    doc = r.read()
+    doc = r.read(100)
 
     if doc.decode('cp437','ignore').find("content='0;URL=errorPage.asp?error=404") != -1:
-        return None
+        return (None,None)
 
-    return doc
+    return (doc, r)
 
 def gen_pck_uri(conn_token, line, index):
     return ".ms-ff-uag-tcp-data/%s-est/line-%s/pck-%s.bin" % (conn_token, line, str(index).zfill(8))
@@ -309,11 +282,19 @@ async def mister_handle_client(client_reader, client_writer):
 
     log.warn('MISTER: reader closed')
 
+async def dump_reader_to_writer(reader, writer):
+    doc = await loop.run_in_executor(None, reader.read, 16*1024)
+    writer.write(doc)
+
+    while doc:
+        doc = await loop.run_in_executor(None, reader.read, 16*1024)
+        writer.write(doc)
+
 async def mister_poll_valet(client_writer, conn_token,opener, main_url):
 
     index = 1
     while True:
-        data = get_content(opener, main_url, gen_pck_uri(conn_token, 'valet', index))
+        data,r = get_content(opener, main_url, gen_pck_uri(conn_token, 'valet', index))
         if data is not None:
             log.debug('MISTER: got data from VALET "%r" (%d b)' % (data, len(data)))
             log.debug('MISTER: relaying VALETS data')
@@ -323,6 +304,9 @@ async def mister_poll_valet(client_writer, conn_token,opener, main_url):
                 break
             else:
                 client_writer.write(data[1:])
+
+                await dump_reader_to_writer(r, client_writer)
+
             index += 1
         else:
             log.debug("MISTER: no news from VALET")
@@ -337,7 +321,7 @@ async def valet_poll_mister(writer, conn_token,opener, main_url):
     index = 1
 
     while True:
-        data = get_content(opener, main_url, gen_pck_uri(conn_token, 'mister', index))
+        data,r = get_content(opener, main_url, gen_pck_uri(conn_token, 'mister', index))
 
         if data is not None:
             log.debug('VALET: got data from MISTER "%r" (%d b)' % (data, len(data)))
@@ -348,6 +332,9 @@ async def valet_poll_mister(writer, conn_token,opener, main_url):
                 break
             else:
                 writer.write(data[1:])
+                
+                await dump_reader_to_writer(r, writer)
+
             index += 1
         else:
             log.debug("VALET: no news from MISTER")
