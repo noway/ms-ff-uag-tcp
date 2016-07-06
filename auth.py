@@ -348,14 +348,14 @@ async def actor_pipe_uag_socket(actor, conn_token, socket_writer):
     
     while True:
 
-        log.info(other+': awaiting for packet listing')
+        log.debug(other+': awaiting for packet listing')
 
         listing_task = asyncio.ensure_future(loop.run_in_executor(None, list_folder, opener, 
             main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
 
         listing = await listing_task
 
-        log.info(other+': awaited')
+        log.debug(other+': awaited')
 
         tasks = []
         # We are relying here on UAG alphanumerical sorting
@@ -369,12 +369,12 @@ async def actor_pipe_uag_socket(actor, conn_token, socket_writer):
                 tasks.append(task)
 
         if len(tasks):
-            log.info(other+': awaiting for first read from UAG')
+            log.debug(other+': awaiting for first read from UAG')
             #await asyncio.wait_for(tasks[0])
         else:
-            log.info(other+': empty pck queue')
+            log.debug(other+': empty pck queue')
         
-        log.info(other+": starting ordered parallelism")
+        log.debug(other+": starting ordered parallelism")
         for task in tasks:
             data, r, url = await task
             
@@ -419,127 +419,18 @@ async def mister_handle_client(client_reader, client_writer):
 
     task = asyncio.Task(mister_poll_valet(client_writer, conn_token, opener, main_url))
     
-    # index = 1
-    # while not client_reader.at_eof():
-    #     log.debug("MISTER: waiting for read from client")
-
-    #     data = await client_reader.read(BUFFER_SIZE)
-
-    #     if client_reader.at_eof():
-    #         data = b'!' + data
-    #     else:
-    #         data = b' ' + data
-
-    #     log.debug("MISTER: got a read from client")
-    #     log.debug('MISTER: sending "%r" (%d) to VALET' % (data, len(data)))
-
-    #     res = await asyncio.ensure_future(loop.run_in_executor(None,
-    #         put_file, opener, main_url, gen_pck_uri(conn_token, 'mister', index), data))
-        
-    #     #log.info(res)
-
-    #     index += 1
-
-    # log.warn('MISTER: reader closed')
     await actor_pipe_socket_uag("mister", conn_token, client_reader)
+
 
 async def mister_poll_valet(client_writer, conn_token, opener, main_url):
 
     await actor_pipe_uag_socket('valet', conn_token, client_writer)
-
-    # # index = 1
-    
-    # read_packets = {}
-    
-    # # listing_task = asyncio.ensure_future(loop.run_in_executor(None, list_folder, opener, 
-    # #     main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet"))
-    
-    # while True:
-
-    #     log.info('MISTER: awaiting for packet listing')
-
-    #     listing_task = asyncio.ensure_future(loop.run_in_executor(None, list_folder, opener, 
-    #         main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet"))
-
-    #     listing = await listing_task
-
-    #     log.info('MISTER: awaited')
-
-    #     tasks = []
-    #     # We are relying here on UAG alphanumerical sorting
-    #     for i in listing:
-    #         if i[1] not in read_packets:
-    #             read_packets[i[1]] = True
-
-    #             task = asyncio.ensure_future(loop.run_in_executor(None, get_content, opener, main_url, 
-    #                 ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/"+i[1]))
-
-    #             tasks.append(task)
-
-    #     if len(tasks):
-    #         log.info('MISTER: awaiting for first read from UAG')
-    #         #await asyncio.wait_for(tasks[0])
-    #     else:
-    #         log.info('MISTER: empty pck queue')
-        
-    #     log.info("MISTER: starting ordered parallelism")
-    #     for task in tasks:
-    #         data, r, url = await task
-    #         # data,r = get_content(opener, main_url, gen_pck_uri(conn_token, 'valet', index))
-            
-    #         # if data is not None:
-            
-    #         log.debug('MISTER: got data from VALET "%r" (%d b)' % (data, len(data)))
-    #         log.debug('MISTER: relaying VALETS data')
-
-    #         if data[0] == b'!'[0]:
-    #             client_writer.write_eof()
-    #             break
-    #         else:
-    #             client_writer.write(data[1:])
-    #             await dump_reader_to_writer(r, client_writer)
-    
-    #         asyncio.ensure_future(loop.run_in_executor(None, delete_file, opener, main_url, url))
-    #         # index += 1
-            
-    #         # else:
-    #         #     log.debug("MISTER: no news from VALET")
-
-    #     await asyncio.sleep(NEXT_TICK) 
-
-    # log.warn('MISTER: writer closed')
 
 
 async def valet_poll_mister(writer, conn_token,opener, main_url):
 
     await actor_pipe_uag_socket('mister', conn_token, writer)
 
-    # index = 1
-
-    # while True:
-    #     data,r,url = get_content(opener, main_url, gen_pck_uri(conn_token, 'mister', index))
-
-    #     if data is not None:
-    #         log.debug('VALET: got data from MISTER "%r" (%d b)' % (data, len(data)))
-    #         log.debug('VALET: relaying MISTERS data')
-
-    #         asyncio.Task(make_gc(opener, main_url, gen_pck_uri(conn_token, 'mister', index)))
-
-    #         if data[0] == b'!'[0]:
-    #             writer.write_eof()
-    #             break
-    #         else:
-    #             writer.write(data[1:])
-                
-    #             await dump_reader_to_writer(r, writer)
-
-    #         index += 1
-    #     else:
-    #         log.debug("VALET: no news from MISTER")
-        
-    #     await asyncio.sleep(NEXT_TICK)
-
-    # log.warn('VALET: writer closed')
 
 async def valet_handle_server():
     # server is capable of only one connection at a time.
@@ -558,56 +449,12 @@ async def valet_handle_server():
         conn_token = conn_token.replace('.con', '')
         log.info("VALET: new connection from MISTER %s" % conn_token)
         
-        reader, writer = await asyncio.open_connection("127.0.0.1", 8000)
+        reader, writer = await asyncio.open_connection("127.0.0.1", 22)
         log.info("VALET: established server conn for %s" % conn_token)
         
         task = asyncio.Task(valet_poll_mister(writer, conn_token, opener, main_url))
 
         await actor_pipe_socket_uag("valet", conn_token, reader)
-
-        # index = 1
-        # sent_data_historical = {}
-        # sent_data = {}
-
-        # while not reader.at_eof():
-
-
-        #     while sum(sent_data.values()) > 1024*1024*4:
-        #         files = await loop.run_in_executor(None, 
-        #             list_folder, opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet")
-        #         new_sent = {}
-        #         log.info("here are the files")
-        #         pprint(files)
-        #         for i in files:
-        #             key = int(i[1].replace('pck-','').replace('.bin',''))
-        #             new_sent[key] = sent_data_historical[key]
-        #         sent_data = new_sent
-
-        #         if sum(sent_data.values()) > 1024*1024*2:
-        #             await asyncio.sleep(3.2)
-
-
-        #     log.debug('VALET: waiting for a read from server')
-        #     data = await reader.read(BUFFER_SIZE)
-
-        #     if reader.at_eof():
-        #         data = b'!' + data
-        #     else:
-        #         data = b' ' + data
-
-        #     log.debug('VALET: got a read from server')
-        #     log.debug('VALET: sending data to MISTER %r (%d b) ' % (data, len(data)))
-
-        #     asyncio.ensure_future(loop.run_in_executor(None, 
-        #         put_file, opener, main_url, gen_pck_uri(conn_token, 'valet', index), data))
-            
-        #     log.info('VALET:putting index %d as %d b' %(index,len(data)))
-        #     sent_data[index] = len(data)
-        #     sent_data_historical[index] = len(data)
-
-        #     index += 1
-
-        # log.warn('VALET: reader closed')
 
     
 
