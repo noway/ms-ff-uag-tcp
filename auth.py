@@ -280,6 +280,67 @@ def mister_accept_client(client_reader, client_writer):
     log.info("New Connection")
     task = asyncio.Task(mister_handle_client(client_reader, client_writer))
 
+
+
+
+
+
+async def actor_pipe_socket_uag(actor, conn_token, socket_reader):
+
+    index = 1
+    sent_data = {}
+    kept_data = {}
+
+    while not socket_reader.at_eof():
+
+        while sum(kept_data.values()) > 4 * 1024*1024:
+
+            files = await loop.run_in_executor(None, 
+                list_folder, opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor)
+
+            new_sent = {}
+            # log.info("here are the files")
+            # pprint(files)
+
+            for i in files:
+                key = int(i[1].replace('pck-','').replace('.bin',''))
+                new_sent[key] = sent_data[key]
+
+            kept_data = new_sent
+
+            if sum(kept_data.values()) > 2 * 1024*1024:
+                await asyncio.sleep(3.2)
+
+
+        log.debug(actor+': waiting for a read from server')
+
+        data = await socket_reader.read(BUFFER_SIZE)
+
+        if socket_reader.at_eof():
+            data = b'!' + data
+        else:
+            data = b' ' + data
+
+        log.debug(actor+': got a read from server')
+        log.debug(actor+': sending data to MISTER %r (%d b) ' % (data, len(data)))
+
+        asyncio.ensure_future(loop.run_in_executor(None, 
+            put_file, opener, main_url, gen_pck_uri(conn_token, actor, index), data))
+        
+        log.info(actor+': putting index %d as %d b' % (index, len(data)))
+
+        kept_data[index] = len(data)
+        sent_data[index] = len(data)
+
+        index += 1
+
+    log.warn(actor+': reader closed')
+
+    
+
+
+
+
 async def mister_handle_client(client_reader, client_writer):
 
     conn_token = datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + ('%08X' % random.randrange(16**8))
@@ -292,28 +353,29 @@ async def mister_handle_client(client_reader, client_writer):
 
     task = asyncio.Task(mister_poll_valet(client_writer, conn_token, opener, main_url))
     
-    index = 1
-    while not client_reader.at_eof():
-        log.debug("MISTER: waiting for read from client")
+    # index = 1
+    # while not client_reader.at_eof():
+    #     log.debug("MISTER: waiting for read from client")
 
-        data = await client_reader.read(BUFFER_SIZE)
+    #     data = await client_reader.read(BUFFER_SIZE)
 
-        if client_reader.at_eof():
-            data = b'!' + data
-        else:
-            data = b' ' + data
+    #     if client_reader.at_eof():
+    #         data = b'!' + data
+    #     else:
+    #         data = b' ' + data
 
-        log.debug("MISTER: got a read from client")
-        log.debug('MISTER: sending "%r" (%d) to VALET' % (data, len(data)))
+    #     log.debug("MISTER: got a read from client")
+    #     log.debug('MISTER: sending "%r" (%d) to VALET' % (data, len(data)))
 
-        res = await asyncio.ensure_future(loop.run_in_executor(None,
-            put_file, opener, main_url, gen_pck_uri(conn_token, 'mister', index), data))
+    #     res = await asyncio.ensure_future(loop.run_in_executor(None,
+    #         put_file, opener, main_url, gen_pck_uri(conn_token, 'mister', index), data))
         
-        #log.info(res)
+    #     #log.info(res)
 
-        index += 1
+    #     index += 1
 
-    log.warn('MISTER: reader closed')
+    # log.warn('MISTER: reader closed')
+    await actor_pipe_socket_uag("mister", conn_token, client_reader)
 
 async def mister_poll_valet(client_writer, conn_token,opener, main_url):
 
@@ -413,6 +475,7 @@ async def valet_handle_server():
     # server is capable of only one connection at a time.
 
     while True:
+
         conn_token = ""
         while True:
             data = list_folder(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/")
@@ -430,49 +493,51 @@ async def valet_handle_server():
         
         task = asyncio.Task(valet_poll_mister(writer, conn_token, opener, main_url))
 
-        index = 1
-        sent_data_historical = {}
-        sent_data = {}
+        await actor_pipe_socket_uag("valet", conn_token, reader)
 
-        while not reader.at_eof():
+        # index = 1
+        # sent_data_historical = {}
+        # sent_data = {}
 
-
-            while sum(sent_data.values()) > 1024*1024*4:
-                files = await loop.run_in_executor(None, 
-                    list_folder, opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet")
-                new_sent = {}
-                log.info("here are the files")
-                pprint(files)
-                for i in files:
-                    key = int(i[1].replace('pck-','').replace('.bin',''))
-                    new_sent[key] = sent_data_historical[key]
-                sent_data = new_sent
-
-                if sum(sent_data.values()) > 1024*1024*2:
-                    await asyncio.sleep(3.2)
+        # while not reader.at_eof():
 
 
-            log.debug('VALET: waiting for a read from server')
-            data = await reader.read(BUFFER_SIZE)
+        #     while sum(sent_data.values()) > 1024*1024*4:
+        #         files = await loop.run_in_executor(None, 
+        #             list_folder, opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet")
+        #         new_sent = {}
+        #         log.info("here are the files")
+        #         pprint(files)
+        #         for i in files:
+        #             key = int(i[1].replace('pck-','').replace('.bin',''))
+        #             new_sent[key] = sent_data_historical[key]
+        #         sent_data = new_sent
 
-            if reader.at_eof():
-                data = b'!' + data
-            else:
-                data = b' ' + data
+        #         if sum(sent_data.values()) > 1024*1024*2:
+        #             await asyncio.sleep(3.2)
 
-            log.debug('VALET: got a read from server')
-            log.debug('VALET: sending data to MISTER %r (%d b) ' % (data, len(data)))
 
-            asyncio.ensure_future(loop.run_in_executor(None, 
-                put_file, opener, main_url, gen_pck_uri(conn_token, 'valet', index), data))
+        #     log.debug('VALET: waiting for a read from server')
+        #     data = await reader.read(BUFFER_SIZE)
+
+        #     if reader.at_eof():
+        #         data = b'!' + data
+        #     else:
+        #         data = b' ' + data
+
+        #     log.debug('VALET: got a read from server')
+        #     log.debug('VALET: sending data to MISTER %r (%d b) ' % (data, len(data)))
+
+        #     asyncio.ensure_future(loop.run_in_executor(None, 
+        #         put_file, opener, main_url, gen_pck_uri(conn_token, 'valet', index), data))
             
-            log.info('VALET:putting index %d as %d b' %(index,len(data)))
-            sent_data[index] = len(data)
-            sent_data_historical[index] = len(data)
+        #     log.info('VALET:putting index %d as %d b' %(index,len(data)))
+        #     sent_data[index] = len(data)
+        #     sent_data_historical[index] = len(data)
 
-            index += 1
+        #     index += 1
 
-        log.warn('VALET: reader closed')
+        # log.warn('VALET: reader closed')
 
     
 
