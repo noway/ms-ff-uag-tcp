@@ -351,24 +351,31 @@ async def actor_pipe_uag_socket(actor, conn_token, socket_writer):
 
     listing_task = asyncio.ensure_future(loop.run_in_executor(
         None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
-    
+
+    index = 1
     while True:
 
         log.debug(other+': awaiting for packet listing')
 
         listing = await listing_task or []
 
-        # listing = listing or []
-
         log.debug(other+': awaited')
 
         tasks = []
+        tasks_id = index
 
         # We are relying here on UAG alphanumerical sorting
         for i in listing:
+            seq_id = int(i[1].replace('pck-','').replace('.bin',''))
+            if seq_id != tasks_id:
+                log.error(other+": MISSING SEQ ORDER PACKET. ok...")
+                break
+
+            tasks_id += 1
+            
+ 
             if i[1] not in read_packets:
                 read_packets[i[1]] = True
-
                 task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
                     ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor+"/"+i[1]))
 
@@ -396,6 +403,7 @@ async def actor_pipe_uag_socket(actor, conn_token, socket_writer):
             else:
                 socket_writer.write(data[1:])
                 await dump_reader_to_writer(r, socket_writer)
+            index += 1
     
             asyncio.ensure_future(loop.run_in_executor(None, uag_session.delete_file, url))
 
@@ -529,8 +537,10 @@ if __name__ == '__main__':
 
     if args.server:
         f = asyncio.ensure_future(valet_handle_server())
+        log.info("Waiting for connection request")
     else:
         f = asyncio.start_server(mister_accept_client, host=None, port=8000)
+        log.info("Server is listening on port 8000")
 
     loop.run_until_complete(f)
     loop.run_forever()
