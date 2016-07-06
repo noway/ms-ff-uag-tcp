@@ -128,6 +128,11 @@ from requests_toolbelt import MultipartEncoder
 
 def put_file(opener, main_url, file, file_content):
     
+    #pprint(opener )
+    #pprint( main_url )
+    #pprint( file )
+    #pprint( file_content)
+
     folder = args.dir + "/" + file
     folder_escaped = quote(folder, safe='')
 
@@ -158,9 +163,9 @@ def put_file(opener, main_url, file, file_content):
     url.add_header("Content-Length", str(len(body2)) )
 
     r = opener.open(url)
-    #html_doc = r.read().decode('utf-8', 'ignore');
+    html_doc = r.read().decode('utf-8', 'ignore');
     #return html_doc
-    return b'ok'
+    #return b'ok'
 
 def create_folder(opener, main_url, folder_name):
     
@@ -249,7 +254,7 @@ def get_content(opener, main_url, file):
     doc = r.read(100)
 
     if doc.decode('cp437','ignore').find("content='0;URL=errorPage.asp?error=404") != -1:
-        return (None,None)
+        return (None,None,None)
 
     return (doc, r, file)
 
@@ -301,8 +306,10 @@ async def mister_handle_client(client_reader, client_writer):
         log.debug("MISTER: got a read from client")
         log.debug('MISTER: sending "%r" (%d) to VALET' % (data, len(data)))
 
-        asyncio.ensure_future(loop.run_in_executor(None,
+        res = await asyncio.ensure_future(loop.run_in_executor(None,
             put_file, opener, main_url, gen_pck_uri(conn_token, 'mister', index), data))
+        
+        #log.info(res)
 
         index += 1
 
@@ -314,12 +321,19 @@ async def mister_poll_valet(client_writer, conn_token,opener, main_url):
     
     read_packets = {}
     
-    listing_task = asyncio.ensure_future(loop.run_in_executor(None, list_folder, opener, 
-        main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet"))
+    # listing_task = asyncio.ensure_future(loop.run_in_executor(None, list_folder, opener, 
+    #     main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet"))
     
     while True:
 
+        log.info('MISTER: awaiting for packet listing')
+
+        listing_task = asyncio.ensure_future(loop.run_in_executor(None, list_folder, opener, 
+            main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet"))
+
         listing = await listing_task
+
+        log.info('MISTER: awaited')
 
         tasks = []
         # We are relying here on UAG alphanumerical sorting
@@ -327,19 +341,18 @@ async def mister_poll_valet(client_writer, conn_token,opener, main_url):
             if i[1] not in read_packets:
                 read_packets[i[1]] = True
 
-                task = asyncio.ensure_future(get_content(opener, main_url, 
-                    ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet"+i[1]))
+                task = asyncio.ensure_future(loop.run_in_executor(None, get_content, opener, main_url, 
+                    ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet/"+i[1]))
 
                 tasks.append(task)
 
         if len(tasks):
-            await asyncio.wait(tasks[0])
+            log.info('MISTER: awaiting for first read from UAG')
+            #await asyncio.wait_for(tasks[0])
         else:
-            log.debug('MISTER: empty pck queue')
+            log.info('MISTER: empty pck queue')
         
-        listing_task = asyncio.ensure_future(loop.run_in_executor(None, list_folder, opener, 
-            main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet"))
-        
+        log.info("MISTER: starting ordered parallelism")
         for task in tasks:
             data, r, url = await task
             # data,r = get_content(opener, main_url, gen_pck_uri(conn_token, 'valet', index))
@@ -356,7 +369,7 @@ async def mister_poll_valet(client_writer, conn_token,opener, main_url):
                 client_writer.write(data[1:])
                 await dump_reader_to_writer(r, client_writer)
     
-            asyncio.Task(make_gc(opener, main_url, url))
+            asyncio.ensure_future(loop.run_in_executor(None, delete_file, opener, main_url, url))
             # index += 1
             
             # else:
@@ -418,17 +431,21 @@ async def valet_handle_server():
         task = asyncio.Task(valet_poll_mister(writer, conn_token, opener, main_url))
 
         index = 1
+        sent_data_historical = {}
         sent_data = {}
 
         while not reader.at_eof():
+
 
             while sum(sent_data.values()) > 1024*1024*4:
                 files = await loop.run_in_executor(None, 
                     list_folder, opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet")
                 new_sent = {}
+                log.info("here are the files")
+                pprint(files)
                 for i in files:
                     key = int(i[1].replace('pck-','').replace('.bin',''))
-                    new_sent[key] = sent_data[key]
+                    new_sent[key] = sent_data_historical[key]
                 sent_data = new_sent
 
                 if sum(sent_data.values()) > 1024*1024*2:
@@ -449,7 +466,9 @@ async def valet_handle_server():
             asyncio.ensure_future(loop.run_in_executor(None, 
                 put_file, opener, main_url, gen_pck_uri(conn_token, 'valet', index), data))
             
+            log.info('VALET:putting index %d as %d b' %(index,len(data)))
             sent_data[index] = len(data)
+            sent_data_historical[index] = len(data)
 
             index += 1
 
