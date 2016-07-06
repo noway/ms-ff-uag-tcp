@@ -174,17 +174,26 @@ def create_folder(opener, main_url, folder_name):
 
     create_folder_url = urljoin(main_url, "../filesharing/newfolder.asp?Folder=" + folder_escaped)
 
-    (body, content_type) = requests.models.RequestEncodingMixin._encode_files([
-        ("Filedata", ('', folder_name)),
-        ("remotefile", ('', args.dir)), 
-        ("submit1", ('', "Create Folder"))], [])
+    files = OrderedDict([
+        ("Filedata", folder_name ),
+        ("remotefile", args.dir), 
+        ("submit1", "Create Folder"),
+    ])
 
-    url = urllib.request.Request(create_folder_url , body)
+    encoder = MultipartEncoder(files)
+    body2 = encoder.to_string()
+
+    # (body, content_type) = requests.models.RequestEncodingMixin._encode_files([
+    #     ("Filedata", ('', folder_name)),
+    #     ("remotefile", ('', args.dir)), 
+    #     ("submit1", ('', "Create Folder"))], [])
+
+    url = urllib.request.Request(create_folder_url , body2)
 
     url.add_header("User-Agent", USER_AGENT)
     url.add_header("Accept", ACCEPT)
-    url.add_header("Content-Type", content_type)
-    url.add_header("Content-Length", str(len(body)) )
+    url.add_header("Content-Type", encoder.content_type)
+    url.add_header("Content-Length", str(len(body2)) )
 
     r = opener.open(url)
     html_doc = r.read().decode('utf-8', 'ignore');
