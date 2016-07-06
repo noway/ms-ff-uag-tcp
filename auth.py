@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 
 import asyncio
-import requests
-
 
 from collections import OrderedDict
 from requests_toolbelt import MultipartEncoder
@@ -16,9 +14,6 @@ import logging
 import urllib.request, ssl
 from urllib.parse import urljoin, quote
 from http.cookiejar import CookieJar, DefaultCookiePolicy
-
-import mimetypes
-import email.generator
 
 from bs4 import BeautifulSoup
 
@@ -349,6 +344,7 @@ async def actor_pipe_socket_uag(actor, conn_token, socket_reader):
     
 
 async def actor_pipe_uag_socket(actor, conn_token, socket_writer):
+    # TODO: what if listing does not return the packet which sequentially goes next? 
 
     read_packets = {}
     other = "mister" if actor == "valet" else "valet"
