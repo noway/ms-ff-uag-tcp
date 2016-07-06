@@ -123,6 +123,9 @@ def perform_auth(opener):
 
     return main_url
 
+from collections import OrderedDict
+from requests_toolbelt import MultipartEncoder
+
 def put_file(opener, main_url, file, file_content):
     
     folder = args.dir + "/" + file
@@ -131,18 +134,28 @@ def put_file(opener, main_url, file, file_content):
     create_folder_url = urljoin(main_url, 
         "../filesharing/FileSharingExt/ShareAccessExt.dll?P=" + folder_escaped + "&overwrite=on")
 
-    (body, content_type) = requests.models.RequestEncodingMixin._encode_files([
-        ("Filedata", (file, file_content)),
-        ("remotefile", ('', args.dir)), 
-        ("remotefilename", ('', folder.replace('/', '\\').replace('\\\\', '//'))), 
-        ("overwrite", ('', "on"))], [])
+    files = OrderedDict([
+        ("Filedata", (file, file_content, 'application/octet-stream') ),
+        ("remotefile", args.dir), 
+        ("remotefilename", folder.replace('/', '\\').replace('\\\\', '//') ), 
+        ("overwrite", "on"),
+    ])
+
+    encoder = MultipartEncoder(files)
+    body2 = encoder.to_string()
+
+    # (body, content_type) = requests.models.RequestEncodingMixin._encode_files([
+    #     ("Filedata", (file, file_content)),
+    #     ("remotefile", ('', args.dir)), 
+    #     ("remotefilename", ('', folder.replace('/', '\\').replace('\\\\', '//'))), 
+    #     ("overwrite", ('', "on"))], [])
     
-    url = urllib.request.Request(create_folder_url , body)
+    url = urllib.request.Request(create_folder_url , body2)
 
     url.add_header("User-Agent", USER_AGENT)
     url.add_header("Accept", ACCEPT)
-    url.add_header("Content-Type", content_type)
-    url.add_header("Content-Length", str(len(body)) )
+    url.add_header("Content-Type", encoder.content_type)
+    url.add_header("Content-Length", str(len(body2)) )
 
     r = opener.open(url)
     #html_doc = r.read().decode('utf-8', 'ignore');
@@ -238,10 +251,22 @@ def get_content(opener, main_url, file):
     if doc.decode('cp437','ignore').find("content='0;URL=errorPage.asp?error=404") != -1:
         return (None,None)
 
-    return (doc, r)
+    return (doc, r, file)
 
 def gen_pck_uri(conn_token, line, index):
     return ".ms-ff-uag-tcp-data/%s-est/line-%s/pck-%s.bin" % (conn_token, line, str(index).zfill(8))
+
+
+async def dump_reader_to_writer(reader, writer):
+    doc = await loop.run_in_executor(None, reader.read, 16*1024)
+    writer.write(doc)
+
+    while doc:
+        doc = await loop.run_in_executor(None, reader.read, 16*1024)
+        writer.write(doc)
+
+async def make_gc(opener, main_url, url):
+    await loop.run_in_executor(None, delete_file, opener, main_url, url)
 
 
 def mister_accept_client(client_reader, client_writer):
@@ -249,7 +274,6 @@ def mister_accept_client(client_reader, client_writer):
         log.error("Something gone terribly wrong")
     log.info("New Connection")
     task = asyncio.Task(mister_handle_client(client_reader, client_writer))
-
 
 async def mister_handle_client(client_reader, client_writer):
 
@@ -277,25 +301,51 @@ async def mister_handle_client(client_reader, client_writer):
         log.debug("MISTER: got a read from client")
         log.debug('MISTER: sending "%r" (%d) to VALET' % (data, len(data)))
 
-        put_file(opener, main_url, gen_pck_uri(conn_token, 'mister', index), data)
+        asyncio.ensure_future(loop.run_in_executor(None,
+            put_file, opener, main_url, gen_pck_uri(conn_token, 'mister', index), data))
+
         index += 1
 
     log.warn('MISTER: reader closed')
 
-async def dump_reader_to_writer(reader, writer):
-    doc = await loop.run_in_executor(None, reader.read, 16*1024)
-    writer.write(doc)
-
-    while doc:
-        doc = await loop.run_in_executor(None, reader.read, 16*1024)
-        writer.write(doc)
-
 async def mister_poll_valet(client_writer, conn_token,opener, main_url):
 
-    index = 1
+    # index = 1
+    
+    read_packets = {}
+    
+    listing_task = asyncio.ensure_future(loop.run_in_executor(None, list_folder, opener, 
+        main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet"))
+    
     while True:
-        data,r = get_content(opener, main_url, gen_pck_uri(conn_token, 'valet', index))
-        if data is not None:
+
+        listing = await listing_task
+
+        tasks = []
+        # We are relying here on UAG alphanumerical sorting
+        for i in listing:
+            if i[1] not in read_packets:
+                read_packets[i[1]] = True
+
+                task = asyncio.ensure_future(get_content(opener, main_url, 
+                    ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet"+i[1]))
+
+                tasks.append(task)
+
+        if len(tasks):
+            await asyncio.wait(tasks[0])
+        else:
+            log.debug('MISTER: empty pck queue')
+        
+        listing_task = asyncio.ensure_future(loop.run_in_executor(None, list_folder, opener, 
+            main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet"))
+        
+        for task in tasks:
+            data, r, url = await task
+            # data,r = get_content(opener, main_url, gen_pck_uri(conn_token, 'valet', index))
+            
+            # if data is not None:
+            
             log.debug('MISTER: got data from VALET "%r" (%d b)' % (data, len(data)))
             log.debug('MISTER: relaying VALETS data')
 
@@ -304,12 +354,13 @@ async def mister_poll_valet(client_writer, conn_token,opener, main_url):
                 break
             else:
                 client_writer.write(data[1:])
-
                 await dump_reader_to_writer(r, client_writer)
-
-            index += 1
-        else:
-            log.debug("MISTER: no news from VALET")
+    
+            asyncio.Task(make_gc(opener, main_url, url))
+            # index += 1
+            
+            # else:
+            #     log.debug("MISTER: no news from VALET")
 
         await asyncio.sleep(NEXT_TICK) 
 
@@ -321,11 +372,13 @@ async def valet_poll_mister(writer, conn_token,opener, main_url):
     index = 1
 
     while True:
-        data,r = get_content(opener, main_url, gen_pck_uri(conn_token, 'mister', index))
+        data,r,url = get_content(opener, main_url, gen_pck_uri(conn_token, 'mister', index))
 
         if data is not None:
             log.debug('VALET: got data from MISTER "%r" (%d b)' % (data, len(data)))
             log.debug('VALET: relaying MISTERS data')
+
+            asyncio.Task(make_gc(opener, main_url, gen_pck_uri(conn_token, 'mister', index)))
 
             if data[0] == b'!'[0]:
                 writer.write_eof()
@@ -365,7 +418,23 @@ async def valet_handle_server():
         task = asyncio.Task(valet_poll_mister(writer, conn_token, opener, main_url))
 
         index = 1
+        sent_data = {}
+
         while not reader.at_eof():
+
+            while sum(sent_data.values()) > 1024*1024*4:
+                files = await loop.run_in_executor(None, 
+                    list_folder, opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet")
+                new_sent = {}
+                for i in files:
+                    key = int(i[1].replace('pck-','').replace('.bin',''))
+                    new_sent[key] = sent_data[key]
+                sent_data = new_sent
+
+                if sum(sent_data.values()) > 1024*1024*2:
+                    await asyncio.sleep(3.2)
+
+
             log.debug('VALET: waiting for a read from server')
             data = await reader.read(BUFFER_SIZE)
 
@@ -377,7 +446,11 @@ async def valet_handle_server():
             log.debug('VALET: got a read from server')
             log.debug('VALET: sending data to MISTER %r (%d b) ' % (data, len(data)))
 
-            put_file(opener, main_url, gen_pck_uri(conn_token, 'valet', index), data)
+            asyncio.ensure_future(loop.run_in_executor(None, 
+                put_file, opener, main_url, gen_pck_uri(conn_token, 'valet', index), data))
+            
+            sent_data[index] = len(data)
+
             index += 1
 
         log.warn('VALET: reader closed')
