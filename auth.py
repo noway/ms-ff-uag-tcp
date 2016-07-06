@@ -2,6 +2,11 @@
 
 import asyncio
 import requests
+
+
+from collections import OrderedDict
+from requests_toolbelt import MultipartEncoder
+
 try:
     import signal
 except ImportError:
@@ -26,6 +31,7 @@ import datetime
 import random
 
 log = logging.getLogger(__name__)
+uag_session = None
 
 BUFFER_SIZE = 1024*768
 NEXT_TICK = 0.001 
@@ -36,6 +42,7 @@ USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/50.0.2661.75 Safari/537.36") # modern UA, otherwise it thinks i'm on mobile
 
 ACCEPT = "*/*"
+
 
 
 ARGS.add_argument(
@@ -64,196 +71,205 @@ ARGS.add_argument(
 ARGS.add_argument(
     '--quiet', action="store", dest='quiet',
     default=0, type=int, help="Don't show debug info")
+        
+class UAGSession:
+    """Class for working with UAG"""
+
+    opener = None
+    home_url = None
+
+    def __init__(self, opener):
+        # super(UAGSession, self).__init__()
+        self.opener = opener
 
 
+    def perform_auth(self):
+        url = urllib.request.Request("https://" + args.domain + "/")
+        url.add_header("User-Agent", USER_AGENT)
+        url.add_header("Accept", ACCEPT)
 
-def perform_auth(opener):
-    url = urllib.request.Request("https://" + args.domain + "/")
-    url.add_header("User-Agent", USER_AGENT)
-    url.add_header("Accept", ACCEPT)
+        r = self.opener.open(url)
 
-    r = opener.open(url)
+        login_url = r.url
+        html_doc = r.read().decode('utf-8')
+        logging.info(login_url)
+        # logging.debug(html_doc)
 
-    login_url = r.url
-    html_doc = r.read().decode('utf-8')
-    logging.info(login_url)
-    #logging.debug(html_doc)
-
-    soup = BeautifulSoup(html_doc, 'html.parser')
-    post_url = soup.find(id="form1").get("action")
-
-    uag_dummy_repository = soup.find(id="form1").find("input", {"name": "dummy_repository"}).get("value")
-    uag_repository = soup.find(id="form1").find("input", {"name": "repository"}).get("value")
-
-    post_data = {
-        "dummy_repository": uag_dummy_repository,
-        "repository": uag_repository,
-        "user_name": auth_creds.split("\n")[0],
-        "password": auth_creds.split("\n")[1],
-        "site_name": "fileaccess",
-        "secure": "1",
-        "resource_id": "2",
-        "login_type": "3",
-    }
-
-    details = urllib.parse.urlencode(post_data).encode('UTF-8')
-    url = urllib.request.Request( urljoin(login_url, post_url) , details)
-    url.add_header("User-Agent", USER_AGENT)
-    url.add_header("Accept", ACCEPT)
-
-    r = opener.open(url)
-
-    html_doc = r.read().decode('utf-8', 'ignore');
-    # new_url = re.search('window\.location\.replace\("([^"]+)"\)', html_doc).group(1)
-
-    # logging.info(r.url)
-    # #logging.debug(html_doc)
-
-    # url = urllib.request.Request( urljoin(r.url, new_url))
-    # url.add_header("User-Agent", USER_AGENT)
-    # url.add_header("Accept", ACCEPT)
-
-    # r = opener.open(url)
-
-    # html_doc = r.read().decode('utf-8', 'ignore');
-
-    main_url = r.url
-    logging.info(r.url)
-    #logging.debug(html_doc)
-
-    return main_url
-
-from collections import OrderedDict
-from requests_toolbelt import MultipartEncoder
-
-def put_file(opener, main_url, file, file_content):
-    
-    folder = args.dir + "/" + file
-    folder_escaped = quote(folder, safe='')
-
-    create_folder_url = urljoin(main_url, 
-        "../filesharing/FileSharingExt/ShareAccessExt.dll?P=" + folder_escaped + "&overwrite=on")
-
-    files = OrderedDict([
-        ("Filedata", (file, file_content, 'application/octet-stream') ),
-        ("remotefile", args.dir), 
-        ("remotefilename", folder.replace('/', '\\').replace('\\\\', '//') ), 
-        ("overwrite", "on"),
-    ])
-
-    encoder = MultipartEncoder(files)
-    body2 = encoder.to_string()
-
-    url = urllib.request.Request(create_folder_url , body2)
-
-    url.add_header("User-Agent", USER_AGENT)
-    url.add_header("Accept", ACCEPT)
-    url.add_header("Content-Type", encoder.content_type)
-    url.add_header("Content-Length", str(len(body2)) )
-
-    r = opener.open(url)
-    html_doc = r.read().decode('utf-8', 'ignore');
-    
-    return html_doc
-
-def create_folder(opener, main_url, folder_name):
-    
-    folder = args.dir + "/" + folder_name
-    folder_escaped = quote(folder, safe='')
-
-    create_folder_url = urljoin(main_url, "../filesharing/newfolder.asp?Folder=" + folder_escaped)
-
-    files = OrderedDict([
-        ("Filedata", folder_name ),
-        ("remotefile", args.dir), 
-        ("submit1", "Create Folder"),
-    ])
-
-    encoder = MultipartEncoder(files)
-    body2 = encoder.to_string()
-
-    url = urllib.request.Request(create_folder_url , body2)
-
-    url.add_header("User-Agent", USER_AGENT)
-    url.add_header("Accept", ACCEPT)
-    url.add_header("Content-Type", encoder.content_type)
-    url.add_header("Content-Length", str(len(body2)) )
-
-    r = opener.open(url)
-    html_doc = r.read().decode('utf-8', 'ignore');
-
-    return html_doc
-
-
-def list_folder(opener, main_url, folder_name):
-    
-    folder = args.dir + "/" + folder_name
-    folder_escaped = quote(folder, safe='')
-
-    create_folder_url = urljoin(main_url, "../filesharing/filelist.asp?S=" + folder_escaped + "&T=9")
-
-    url = urllib.request.Request(create_folder_url)
-
-    url.add_header("User-Agent", USER_AGENT)
-    url.add_header("Accept", ACCEPT)
-
-    r = opener.open(url)
-    html_doc = r.read().decode('utf-8', 'ignore');
-
-
-    return_arr = []
-    try:
         soup = BeautifulSoup(html_doc, 'html.parser')
-        file_nodes = soup.find(id="fileListTable").find("tbody").find_all("label")
-        for i in file_nodes:
-            if i.get("onmousedown").find('isFile = true') != -1:
-                isFile = True
-            else:
-                isFile = False
+        post_url = soup.find(id="form1").get("action")
 
-            return_arr.append((isFile, i.find('nobr').text))
-    except Exception:
-        return_arr = None
-    return return_arr
+        uag_dummy_repository = soup.find(id="form1").find("input", {"name": "dummy_repository"}).get("value")
+        uag_repository = soup.find(id="form1").find("input", {"name": "repository"}).get("value")
 
-def delete_file(opener, main_url, file):
-    
-    folder = args.dir + "/" + file
-    folder_escaped = quote(folder, safe='')
+        post_data = {
+            "dummy_repository": uag_dummy_repository,
+            "repository": uag_repository,
+            "user_name": auth_creds.split("\n")[0],
+            "password": auth_creds.split("\n")[1],
+            "site_name": "fileaccess",
+            "secure": "1",
+            "resource_id": "2",
+            "login_type": "3",
+        }
 
-    create_folder_url = urljoin(main_url, 
-        "../filesharing/filelist.asp?S=" + folder_escaped + "&action=1&T=9")
+        details = urllib.parse.urlencode(post_data).encode('UTF-8')
+        url = urllib.request.Request( urljoin(login_url, post_url) , details)
+        url.add_header("User-Agent", USER_AGENT)
+        url.add_header("Accept", ACCEPT)
 
-    url = urllib.request.Request(create_folder_url)
+        r = self.opener.open(url)
 
-    url.add_header("User-Agent", USER_AGENT)
-    url.add_header("Accept", ACCEPT)
+        html_doc = r.read().decode('utf-8', 'ignore');
+        # new_url = re.search('window\.location\.replace\("([^"]+)"\)', html_doc).group(1)
 
-    r = opener.open(url)
-    html_doc = r.read().decode('utf-8', 'ignore');
+        # logging.info(r.url)
+        # #logging.debug(html_doc)
 
-    return html_doc
+        # url = urllib.request.Request( urljoin(r.url, new_url))
+        # url.add_header("User-Agent", USER_AGENT)
+        # url.add_header("Accept", ACCEPT)
 
-def get_content(opener, main_url, file):
-    
-    folder = args.dir + "/" + file
-    folder_escaped = quote(folder, safe='')
+        # r = self.opener.open(url)
 
-    create_folder_url = urljoin(main_url, "../filesharing/FileSharingExt/?OPEN&P=" + folder_escaped)
+        # html_doc = r.read().decode('utf-8', 'ignore');
 
-    url = urllib.request.Request(create_folder_url)
+        main_url = r.url
+        logging.info(r.url)
+        #logging.debug(html_doc)
 
-    url.add_header("User-Agent", USER_AGENT)
-    url.add_header("Accept", ACCEPT)
+        self.main_url = main_url
 
-    r = opener.open(url)
-    doc = r.read(100)
 
-    if doc.decode('cp437','ignore').find("content='0;URL=errorPage.asp?error=404") != -1:
-        return (None,None,None)
+    def put_file(self, file, file_content):
+        
+        folder = args.dir + "/" + file
+        folder_escaped = quote(folder, safe='')
 
-    return (doc, r, file)
+        create_folder_url = urljoin(self.main_url, 
+            "../filesharing/FileSharingExt/ShareAccessExt.dll?P=" + folder_escaped + "&overwrite=on")
 
+        files = OrderedDict([
+            ("Filedata", (file, file_content, 'application/octet-stream') ),
+            ("remotefile", args.dir), 
+            ("remotefilename", folder.replace('/', '\\').replace('\\\\', '//') ), 
+            ("overwrite", "on"),
+        ])
+
+        encoder = MultipartEncoder(files)
+        body2 = encoder.to_string()
+
+        url = urllib.request.Request(create_folder_url , body2)
+
+        url.add_header("User-Agent", USER_AGENT)
+        url.add_header("Accept", ACCEPT)
+        url.add_header("Content-Type", encoder.content_type)
+        url.add_header("Content-Length", str(len(body2)) )
+
+        r = self.opener.open(url)
+        html_doc = r.read().decode('utf-8', 'ignore');
+        
+        return html_doc
+
+    def create_folder(self, directory):
+        
+        folder = args.dir + "/" + directory
+        folder_escaped = quote(folder, safe='')
+
+        create_folder_url = urljoin(self.main_url, "../filesharing/newfolder.asp?Folder=" + folder_escaped)
+
+        files = OrderedDict([
+            ("Filedata", directory ),
+            ("remotefile", args.dir), 
+            ("submit1", "Create Folder"),
+        ])
+
+        encoder = MultipartEncoder(files)
+        body2 = encoder.to_string()
+
+        url = urllib.request.Request(create_folder_url , body2)
+
+        url.add_header("User-Agent", USER_AGENT)
+        url.add_header("Accept", ACCEPT)
+        url.add_header("Content-Type", encoder.content_type)
+        url.add_header("Content-Length", str(len(body2)) )
+
+        r = self.opener.open(url)
+        html_doc = r.read().decode('utf-8', 'ignore');
+
+        return html_doc
+
+
+    def list_folder(self, directory):
+        
+        folder = args.dir + "/" + directory
+        folder_escaped = quote(folder, safe='')
+
+        create_folder_url = urljoin(self.main_url, "../filesharing/filelist.asp?S=" + folder_escaped + "&T=9")
+
+        url = urllib.request.Request(create_folder_url)
+
+        url.add_header("User-Agent", USER_AGENT)
+        url.add_header("Accept", ACCEPT)
+
+        r = self.opener.open(url)
+        html_doc = r.read().decode('utf-8', 'ignore');
+
+
+        return_arr = []
+        try:
+            soup = BeautifulSoup(html_doc, 'html.parser')
+            file_nodes = soup.find(id="fileListTable").find("tbody").find_all("label")
+            for i in file_nodes:
+                if i.get("onmousedown").find('isFile = true') != -1:
+                    isFile = True
+                else:
+                    isFile = False
+
+                return_arr.append((isFile, i.find('nobr').text))
+        except Exception:
+            return_arr = None
+        return return_arr
+
+    def delete_file(self, file):
+        
+        folder = args.dir + "/" + file
+        folder_escaped = quote(folder, safe='')
+
+        create_folder_url = urljoin(self.main_url, 
+            "../filesharing/filelist.asp?S=" + folder_escaped + "&action=1&T=9")
+
+        url = urllib.request.Request(create_folder_url)
+
+        url.add_header("User-Agent", USER_AGENT)
+        url.add_header("Accept", ACCEPT)
+
+        r = self.opener.open(url)
+        html_doc = r.read().decode('utf-8', 'ignore');
+
+        return html_doc
+
+    def get_content(self, file):
+        
+        folder = args.dir + "/" + file
+        folder_escaped = quote(folder, safe='')
+
+        create_folder_url = urljoin(self.main_url, "../filesharing/FileSharingExt/?OPEN&P=" + folder_escaped)
+
+        url = urllib.request.Request(create_folder_url)
+
+        url.add_header("User-Agent", USER_AGENT)
+        url.add_header("Accept", ACCEPT)
+
+        r = self.opener.open(url)
+        doc = r.read(100)
+
+        if doc.decode('cp437','ignore').find("content='0;URL=errorPage.asp?error=404") != -1:
+            return (None,None,None)
+
+        return (doc, r, file)
+
+
+        
 def gen_pck_uri(conn_token, line, index):
     return ".ms-ff-uag-tcp-data/%s-est/line-%s/pck-%s.bin" % (conn_token, line, str(index).zfill(8))
 
@@ -266,8 +282,8 @@ async def dump_reader_to_writer(reader, writer):
         doc = await loop.run_in_executor(None, reader.read, 16*1024)
         writer.write(doc)
 
-async def make_gc(opener, main_url, url):
-    await loop.run_in_executor(None, delete_file, opener, main_url, url)
+async def make_gc(opener, url):
+    await loop.run_in_executor(None, uag_session.delete_file, url)
 
 
 def mister_accept_client(client_reader, client_writer):
@@ -292,7 +308,7 @@ async def actor_pipe_socket_uag(actor, conn_token, socket_reader):
         while sum(kept_data.values()) > 4 * 1024*1024:
 
             files = await loop.run_in_executor(None, 
-                list_folder, opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor)
+                uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor)
 
             new_sent = {}
 
@@ -319,7 +335,7 @@ async def actor_pipe_socket_uag(actor, conn_token, socket_reader):
         log.debug(actor+': sending data to MISTER %r (%d b) ' % (data, len(data)))
 
         asyncio.ensure_future(loop.run_in_executor(None, 
-            put_file, opener, main_url, gen_pck_uri(conn_token, actor, index), data))
+            uag_session.put_file, gen_pck_uri(conn_token, actor, index), data))
         
         log.info(actor+': putting index %d as %d b' % (index, len(data)))
 
@@ -337,8 +353,8 @@ async def actor_pipe_uag_socket(actor, conn_token, socket_writer):
     read_packets = {}
     other = "mister" if actor == "valet" else "valet"
 
-    listing_task = asyncio.ensure_future(loop.run_in_executor(None, list_folder, opener, 
-        main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
+    listing_task = asyncio.ensure_future(loop.run_in_executor(
+        None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
     
     while True:
 
@@ -357,7 +373,7 @@ async def actor_pipe_uag_socket(actor, conn_token, socket_writer):
             if i[1] not in read_packets:
                 read_packets[i[1]] = True
 
-                task = asyncio.ensure_future(loop.run_in_executor(None, get_content, opener, main_url, 
+                task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
                     ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor+"/"+i[1]))
 
                 tasks.append(task)
@@ -368,8 +384,8 @@ async def actor_pipe_uag_socket(actor, conn_token, socket_writer):
         else:
             log.debug(other+': empty pck queue')
         
-        listing_task = asyncio.ensure_future(loop.run_in_executor(None, list_folder, opener, 
-            main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
+        listing_task = asyncio.ensure_future(loop.run_in_executor(
+            None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
 
         log.debug(other+": starting ordered parallelism")
         for task in tasks:
@@ -385,7 +401,7 @@ async def actor_pipe_uag_socket(actor, conn_token, socket_writer):
                 socket_writer.write(data[1:])
                 await dump_reader_to_writer(r, socket_writer)
     
-            asyncio.ensure_future(loop.run_in_executor(None, delete_file, opener, main_url, url))
+            asyncio.ensure_future(loop.run_in_executor(None, uag_session.delete_file, url))
 
         await asyncio.sleep(NEXT_TICK) 
 
@@ -400,13 +416,13 @@ async def mister_handle_client(client_reader, client_writer):
 
     conn_token = datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + ('%08X' % random.randrange(16**8))
 
-    put_file(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con", b'')
+    uag_session.put_file(".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con", b'')
 
-    task = asyncio.Task(mister_poll_valet(client_writer, conn_token, opener, main_url))
+    task = asyncio.Task(mister_poll_valet(client_writer, conn_token, opener))
 
 
     while True:
-        data = list_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/")
+        data = uag_session.list_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/")
 
         if data is None:
             log.info("data is None")
@@ -427,12 +443,12 @@ async def mister_handle_client(client_reader, client_writer):
     await actor_pipe_socket_uag("mister", conn_token, client_reader)
 
 
-async def mister_poll_valet(client_writer, conn_token, opener, main_url):
+async def mister_poll_valet(client_writer, conn_token, opener):
 
     await actor_pipe_uag_socket('valet', conn_token, client_writer)
 
 
-async def valet_poll_mister(writer, conn_token,opener, main_url):
+async def valet_poll_mister(writer, conn_token,opener):
 
     await actor_pipe_uag_socket('mister', conn_token, writer)
 
@@ -444,13 +460,13 @@ async def valet_handle_server():
 
         conn_token = ""
         while True:
-            data = list_folder(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/")
+            data = uag_session.list_folder(".ms-ff-uag-tcp-data/to-connect/")
             if len(data):
                 conn_token = data[0][1].replace('.con', '')
-                create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est") # not like in spec
-                create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister") # not like in spec
-                create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet") # not like in spec
-                delete_file(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con")
+                uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est") # not like in spec
+                uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister") # not like in spec
+                uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet") # not like in spec
+                uag_session.delete_file(".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con")
                 break
             await asyncio.sleep(NEXT_TICK)
 
@@ -459,7 +475,7 @@ async def valet_handle_server():
         reader, writer = await asyncio.open_connection("127.0.0.1", 22)
         log.info("VALET: established server conn for %s" % conn_token)
         
-        task = asyncio.Task(valet_poll_mister(writer, conn_token, opener, main_url))
+        task = asyncio.Task(valet_poll_mister(writer, conn_token, opener))
 
         await actor_pipe_socket_uag("valet", conn_token, reader)
 
@@ -505,8 +521,9 @@ if __name__ == '__main__':
 
 
     
-
-    main_url = perform_auth(opener)
+    uag_session = UAGSession(opener)
+    uag_session.perform_auth()
+    #main_url = perform_auth(opener)
 
     loop = asyncio.get_event_loop()
 
@@ -525,7 +542,7 @@ if __name__ == '__main__':
 
 
 
-
+    # Unit tests would be of use
     #create_folder(opener, main_url, 'testing-folders')
     #pprint(list_folder(opener, main_url, ''))
     #pprint(get_content(opener, main_url, 'ms-ff-uag-tcp.md'))
