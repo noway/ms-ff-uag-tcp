@@ -59,8 +59,12 @@ ARGS.add_argument(
 
 
 ARGS.add_argument(
-    '--server', action="store_true", dest='server',
-     help='connect it to the server')
+    '--server', action="store", dest='server',
+    type=str, help='Server mode: connect to that address')
+
+ARGS.add_argument(
+    '--client', action="store", dest='client',
+    type=str, help='Client mode: listen to address for connections')
 
 
 ARGS.add_argument(
@@ -399,7 +403,9 @@ async def actor_pipe_uag_socket(actor, conn_token, socket_writer):
 
             if data[0] == b'!'[0]:
                 socket_writer.write_eof()
+                # TODO: should be break(2), 
                 break
+
             else:
                 socket_writer.write(data[1:])
                 await dump_reader_to_writer(r, socket_writer)
@@ -476,7 +482,7 @@ async def valet_handle_server():
 
         log.info("VALET: new connection from MISTER %s" % conn_token)
         
-        reader, writer = await asyncio.open_connection("127.0.0.1", 22)
+        reader, writer = await asyncio.open_connection(args.server.split(':')[0], int(args.server.split(':')[1]))
         log.info("VALET: established server conn for %s" % conn_token)
         
         task = asyncio.Task(valet_poll_mister(writer, conn_token, opener))
@@ -522,12 +528,8 @@ if __name__ == '__main__':
 
 
 
-
-
-    
     uag_session = UAGSession(opener)
     uag_session.perform_auth()
-    #main_url = perform_auth(opener)
 
     loop = asyncio.get_event_loop()
 
@@ -539,7 +541,7 @@ if __name__ == '__main__':
         f = asyncio.ensure_future(valet_handle_server())
         log.info("Waiting for connection request")
     else:
-        f = asyncio.start_server(mister_accept_client, host=None, port=8000)
+        f = asyncio.start_server(mister_accept_client, host=args.client.split(':')[0], port=int(args.client.split(':')[1]))
         log.info("Server is listening on port 8000")
 
     loop.run_until_complete(f)
