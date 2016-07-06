@@ -348,7 +348,7 @@ async def actor_pipe_socket_uag(actor, conn_token, socket_reader):
     
 
 async def actor_pipe_uag_socket(actor, conn_token, socket_writer):
-    # TODO: what if listing does not return the packet which sequentially goes next? 
+    # TODO: query for next sequntial packet and do listing just as complementary thing
 
     read_packets = {}
     other = "mister" if actor == "valet" else "valet"
