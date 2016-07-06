@@ -128,11 +128,6 @@ from requests_toolbelt import MultipartEncoder
 
 def put_file(opener, main_url, file, file_content):
     
-    #pprint(opener )
-    #pprint( main_url )
-    #pprint( file )
-    #pprint( file_content)
-
     folder = args.dir + "/" + file
     folder_escaped = quote(folder, safe='')
 
@@ -149,12 +144,6 @@ def put_file(opener, main_url, file, file_content):
     encoder = MultipartEncoder(files)
     body2 = encoder.to_string()
 
-    # (body, content_type) = requests.models.RequestEncodingMixin._encode_files([
-    #     ("Filedata", (file, file_content)),
-    #     ("remotefile", ('', args.dir)), 
-    #     ("remotefilename", ('', folder.replace('/', '\\').replace('\\\\', '//'))), 
-    #     ("overwrite", ('', "on"))], [])
-    
     url = urllib.request.Request(create_folder_url , body2)
 
     url.add_header("User-Agent", USER_AGENT)
@@ -164,8 +153,8 @@ def put_file(opener, main_url, file, file_content):
 
     r = opener.open(url)
     html_doc = r.read().decode('utf-8', 'ignore');
-    #return html_doc
-    #return b'ok'
+    
+    return html_doc
 
 def create_folder(opener, main_url, folder_name):
     
@@ -182,11 +171,6 @@ def create_folder(opener, main_url, folder_name):
 
     encoder = MultipartEncoder(files)
     body2 = encoder.to_string()
-
-    # (body, content_type) = requests.models.RequestEncodingMixin._encode_files([
-    #     ("Filedata", ('', folder_name)),
-    #     ("remotefile", ('', args.dir)), 
-    #     ("submit1", ('', "Create Folder"))], [])
 
     url = urllib.request.Request(create_folder_url , body2)
 
@@ -217,16 +201,19 @@ def list_folder(opener, main_url, folder_name):
     html_doc = r.read().decode('utf-8', 'ignore');
 
 
-    soup = BeautifulSoup(html_doc, 'html.parser')
-    file_nodes = soup.find(id="fileListTable").find("tbody").find_all("label")
     return_arr = []
-    for i in file_nodes:
-        if i.get("onmousedown").find('isFile = true') != -1:
-            isFile = True
-        else:
-            isFile = False
+    try:
+        soup = BeautifulSoup(html_doc, 'html.parser')
+        file_nodes = soup.find(id="fileListTable").find("tbody").find_all("label")
+        for i in file_nodes:
+            if i.get("onmousedown").find('isFile = true') != -1:
+                isFile = True
+            else:
+                isFile = False
 
-        return_arr.append((isFile, i.find('nobr').text))
+            return_arr.append((isFile, i.find('nobr').text))
+    except Exception:
+        return_arr = None
     return return_arr
 
 def delete_file(opener, main_url, file):
@@ -308,8 +295,6 @@ async def actor_pipe_socket_uag(actor, conn_token, socket_reader):
                 list_folder, opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor)
 
             new_sent = {}
-            # log.info("here are the files")
-            # pprint(files)
 
             for i in files:
                 key = int(i[1].replace('pck-','').replace('.bin',''))
@@ -352,21 +337,21 @@ async def actor_pipe_uag_socket(actor, conn_token, socket_writer):
     read_packets = {}
     other = "mister" if actor == "valet" else "valet"
 
-    # listing_task = asyncio.ensure_future(loop.run_in_executor(None, list_folder, opener, 
-    #     main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
+    listing_task = asyncio.ensure_future(loop.run_in_executor(None, list_folder, opener, 
+        main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
     
     while True:
 
         log.debug(other+': awaiting for packet listing')
 
-        listing_task = asyncio.ensure_future(loop.run_in_executor(None, list_folder, opener, 
-            main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
+        listing = await listing_task or []
 
-        listing = await listing_task
+        # listing = listing or []
 
         log.debug(other+': awaited')
 
         tasks = []
+
         # We are relying here on UAG alphanumerical sorting
         for i in listing:
             if i[1] not in read_packets:
@@ -379,17 +364,16 @@ async def actor_pipe_uag_socket(actor, conn_token, socket_writer):
 
         if len(tasks):
             log.debug(other+': awaiting for first read from UAG')
-            #await asyncio.wait_for(tasks[0])
+            await asyncio.wait([tasks[0]], timeout=None)
         else:
             log.debug(other+': empty pck queue')
         
+        listing_task = asyncio.ensure_future(loop.run_in_executor(None, list_folder, opener, 
+            main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
+
         log.debug(other+": starting ordered parallelism")
         for task in tasks:
             data, r, url = await task
-            
-            # data,r = get_content(opener, main_url, gen_pck_uri(conn_token, actor, index))
-            
-            # if data is not None:
             
             log.debug(other+': got data from VALET "%r" (%d b)' % (data, len(data)))
             log.debug(other+': relaying VALETS data')
@@ -402,10 +386,6 @@ async def actor_pipe_uag_socket(actor, conn_token, socket_writer):
                 await dump_reader_to_writer(r, socket_writer)
     
             asyncio.ensure_future(loop.run_in_executor(None, delete_file, opener, main_url, url))
-            # index += 1
-            
-            # else:
-            #     log.debug(other+": no news from VALET")
 
         await asyncio.sleep(NEXT_TICK) 
 
@@ -420,13 +400,33 @@ async def mister_handle_client(client_reader, client_writer):
 
     conn_token = datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + ('%08X' % random.randrange(16**8))
 
-    create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est") # not like in spec
-    create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister") # not like in spec
-    create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet") # not like in spec
+    # create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est") # not like in spec
+    # create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister") # not like in spec
+    # create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet") # not like in spec
 
     put_file(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con", b'')
 
     task = asyncio.Task(mister_poll_valet(client_writer, conn_token, opener, main_url))
+
+
+    while True:
+        data = list_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/")
+
+        if data is None:
+            log.info("data is None")
+            await asyncio.sleep(NEXT_TICK)
+            continue
+        
+        # pprint(data)
+        
+        if (False, "line-mister") in data:
+            pprint(data)
+            log.info("connection established!!")
+            break
+        else:
+            log.info("waiting to ack from server")
+
+        await asyncio.sleep(NEXT_TICK)
     
     await actor_pipe_socket_uag("mister", conn_token, client_reader)
 
@@ -450,12 +450,14 @@ async def valet_handle_server():
         while True:
             data = list_folder(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/")
             if len(data):
-                conn_token = data[0][1]
-                delete_file(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/"+conn_token)
+                conn_token = data[0][1].replace('.con', '')
+                create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est") # not like in spec
+                create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister") # not like in spec
+                create_folder(opener, main_url, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet") # not like in spec
+                delete_file(opener, main_url, ".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con")
                 break
             await asyncio.sleep(NEXT_TICK)
-            
-        conn_token = conn_token.replace('.con', '')
+
         log.info("VALET: new connection from MISTER %s" % conn_token)
         
         reader, writer = await asyncio.open_connection("127.0.0.1", 22)
