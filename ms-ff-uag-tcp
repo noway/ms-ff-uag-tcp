@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# ToDo: init methods
+# ToDo: clean up methods
+# ToDo: clean connection close
+# ToDo: multiple connections?
+# ToDo: ditch all blocking op
+# ToDo: ignore redirect
+
 import asyncio
 
 from collections import OrderedDict
@@ -29,7 +36,7 @@ log = logging.getLogger(__name__)
 uag_session = None
 
 BUFFER_SIZE = 1024*768
-NEXT_TICK = 0.001 
+NEXT_TICK = 0.01
 
 
 ARGS = argparse.ArgumentParser(description="ms-ff-uag-tcp")
@@ -119,22 +126,24 @@ class UAGSession:
         r = self.opener.open(url)
 
         html_doc = r.read().decode('utf-8', 'ignore');
-        # new_url = re.search('window\.location\.replace\("([^"]+)"\)', html_doc).group(1)
 
-        # logging.info(r.url)
-        # #logging.debug(html_doc)
+        if False:
+            new_url = re.search('window\.location\.replace\("([^"]+)"\)', html_doc).group(1)
 
-        # url = urllib.request.Request( urljoin(r.url, new_url))
-        # url.add_header("User-Agent", USER_AGENT)
-        # url.add_header("Accept", ACCEPT)
+            logging.info(r.url)
+            #logging.debug(html_doc)
 
-        # r = self.opener.open(url)
+            url = urllib.request.Request( urljoin(r.url, new_url))
+            url.add_header("User-Agent", USER_AGENT)
+            url.add_header("Accept", ACCEPT)
 
-        # html_doc = r.read().decode('utf-8', 'ignore');
+            r = self.opener.open(url)
+
+            html_doc = r.read().decode('utf-8', 'ignore');
 
         main_url = r.url
         logging.info(r.url)
-        #logging.debug(html_doc)
+        # logging.debug(html_doc)
 
         self.main_url = main_url
 
@@ -289,14 +298,14 @@ def mister_accept_client(client_reader, client_writer):
     if args.server:
         log.error("Something gone terribly wrong")
     log.info("New Connection")
-    task = asyncio.Task(mister_handle_client(client_reader, client_writer))
+    task = asyncio.ensure_future(mister_handle_client(client_reader, client_writer))
 
 
 
 
 
 
-async def actor_pipe_socket_uag(actor, conn_token, socket_reader):
+async def actor_pipe_socket_to_uag(actor, conn_token, socket_reader):
 
     index = 1
     sent_data = {}
@@ -347,9 +356,8 @@ async def actor_pipe_socket_uag(actor, conn_token, socket_reader):
 
     
 
-async def actor_pipe_uag_socket(actor, conn_token, socket_writer):
-    # TODO: query for next sequntial packet and do listing just as complementary thing
-
+async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
+    # TODO: query for packet next in seq order to make the latency less
     read_packets = {}
     other = "mister" if actor == "valet" else "valet"
 
@@ -428,8 +436,7 @@ async def mister_handle_client(client_reader, client_writer):
 
     uag_session.put_file(".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con", b'')
 
-    task = asyncio.Task(mister_poll_valet(client_writer, conn_token, opener))
-
+    task = asyncio.ensure_future(actor_pipe_uag_to_socket('valet', conn_token, client_writer))
 
     while True:
         data = uag_session.list_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/")
@@ -450,17 +457,15 @@ async def mister_handle_client(client_reader, client_writer):
 
         await asyncio.sleep(NEXT_TICK)
     
-    await actor_pipe_socket_uag("mister", conn_token, client_reader)
+    await actor_pipe_socket_to_uag("mister", conn_token, client_reader)
 
 
-async def mister_poll_valet(client_writer, conn_token, opener):
+# async def mister_poll_valet(client_writer, conn_token, opener):
+#     await actor_pipe_uag_to_socket('valet', conn_token, client_writer)
 
-    await actor_pipe_uag_socket('valet', conn_token, client_writer)
 
-
-async def valet_poll_mister(writer, conn_token,opener):
-
-    await actor_pipe_uag_socket('mister', conn_token, writer)
+# async def valet_poll_mister(writer, conn_token,opener):
+#     await actor_pipe_uag_to_socket('mister', conn_token, writer)
 
 
 async def valet_handle_server():
@@ -469,10 +474,15 @@ async def valet_handle_server():
     while True:
 
         conn_token = ""
+        conn_task = None
+
         while True:
             data = uag_session.list_folder(".ms-ff-uag-tcp-data/to-connect/")
             if len(data):
                 conn_token = data[0][1].replace('.con', '')
+                
+                conn_task = asyncio.ensure_future(asyncio.open_connection(args.server.split(':')[0], int(args.server.split(':')[1])))
+                
                 uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est") # not like in spec
                 uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister") # not like in spec
                 uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet") # not like in spec
@@ -482,12 +492,11 @@ async def valet_handle_server():
 
         log.info("VALET: new connection from MISTER %s" % conn_token)
         
-        reader, writer = await asyncio.open_connection(args.server.split(':')[0], int(args.server.split(':')[1]))
+        reader, writer = await conn_task
         log.info("VALET: established server conn for %s" % conn_token)
-        
-        task = asyncio.Task(valet_poll_mister(writer, conn_token, opener))
 
-        await actor_pipe_socket_uag("valet", conn_token, reader)
+        asyncio.ensure_future(actor_pipe_uag_to_socket('mister', conn_token, writer))
+        await actor_pipe_socket_to_uag("valet", conn_token, reader)
 
     
 
