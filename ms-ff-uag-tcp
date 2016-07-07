@@ -44,7 +44,7 @@ USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/50.0.2661.75 Safari/537.36") # modern UA, otherwise it thinks i'm on mobile
 
 ACCEPT = "*/*"
-
+ALLOW_REDIRECT = True
 
 
 ARGS.add_argument(
@@ -173,10 +173,18 @@ class UAGSession:
         url.add_header("Content-Type", encoder.content_type)
         url.add_header("Content-Length", str(len(body2)) )
 
-        r = self.opener.open(url)
-        html_doc = r.read().decode('utf-8', 'ignore');
+
+        try:
+            r = self.opener.open(url)
+        except urllib.error.HTTPError:
+            html_doc = ''
+        else:
+            # html_doc = r.read().decode('utf-8', 'ignore');
+
+        return b'ok'
+        #html_doc = r.read().decode('utf-8', 'ignore');
         
-        return html_doc
+        #return html_doc
 
     def create_folder(self, directory):
         
@@ -201,8 +209,12 @@ class UAGSession:
         url.add_header("Content-Type", encoder.content_type)
         url.add_header("Content-Length", str(len(body2)) )
 
-        r = self.opener.open(url)
-        html_doc = r.read().decode('utf-8', 'ignore');
+        try:
+            r = self.opener.open(url)
+        except urllib.error.HTTPError:
+            html_doc = ''
+        else:
+            html_doc = r.read().decode('utf-8', 'ignore');
 
         return html_doc
 
@@ -219,8 +231,16 @@ class UAGSession:
         url.add_header("User-Agent", USER_AGENT)
         url.add_header("Accept", ACCEPT)
 
-        r = self.opener.open(url)
-        html_doc = r.read().decode('utf-8', 'ignore');
+
+        try:
+            r = self.opener.open(url)
+        except urllib.error.HTTPError:
+            return [] # Empty directory
+        else:
+            html_doc = r.read().decode('utf-8', 'ignore');
+
+        # r = self.opener.open(url)
+        # html_doc = r.read().decode('utf-8', 'ignore');
 
 
         return_arr = []
@@ -235,7 +255,7 @@ class UAGSession:
 
                 return_arr.append((isFile, i.find('nobr').text))
         except Exception:
-            return_arr = None
+            return_arr = None # Non-existant directory
         return return_arr
 
     def delete_file(self, file):
@@ -251,8 +271,13 @@ class UAGSession:
         url.add_header("User-Agent", USER_AGENT)
         url.add_header("Accept", ACCEPT)
 
-        r = self.opener.open(url)
-        html_doc = r.read().decode('utf-8', 'ignore');
+
+        try:
+            r = self.opener.open(url)
+        except urllib.error.HTTPError:
+            html_doc = ''
+        else:
+            html_doc = r.read().decode('utf-8', 'ignore');
 
         return html_doc
 
@@ -268,11 +293,16 @@ class UAGSession:
         url.add_header("User-Agent", USER_AGENT)
         url.add_header("Accept", ACCEPT)
 
-        r = self.opener.open(url)
+
+        try:
+            r = self.opener.open(url)
+        except urllib.error.HTTPError:
+            doc = ''
+
         doc = r.read(100)
 
-        if doc.decode('cp437','ignore').find("content='0;URL=errorPage.asp?error=404") != -1:
-            return (None,None,None)
+        if doc == '' or doc.decode('cp437','ignore').find("content='0;URL=errorPage.asp?error=404") != -1:
+            return (None, None, file)
 
         return (doc, r, file)
 
@@ -355,21 +385,23 @@ async def actor_pipe_socket_to_uag(actor, conn_token, socket_reader):
     log.warn(actor+': reader closed')
 
     
-
+import os.path
 async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
     # TODO: query for packet next in seq order to make the latency less
     read_packets = {}
+    started_packets = {}
     other = "mister" if actor == "valet" else "valet"
 
-    listing_task = asyncio.ensure_future(loop.run_in_executor(
-        None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
+    # listing_task = asyncio.ensure_future(loop.run_in_executor(
+    #     None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
 
     index = 1
     while True:
 
-        log.debug(other+': awaiting for packet listing')
+        #log.info(other+': awaiting for packet listing')
 
-        listing = await listing_task or []
+        #listing = await listing_task or []
+        listing = [(True, "pck-%s.bin" % str(index).zfill(8) )]
 
         log.debug(other+': awaited')
 
@@ -386,8 +418,8 @@ async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
             tasks_id += 1
             
  
-            if i[1] not in read_packets:
-                read_packets[i[1]] = True
+            if i[1] not in read_packets and i[1] not in started_packets:
+                started_packets[i[1]] = True
                 task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
                     ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor+"/"+i[1]))
 
@@ -399,27 +431,33 @@ async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
         else:
             log.debug(other+': empty pck queue')
         
-        listing_task = asyncio.ensure_future(loop.run_in_executor(
-            None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
+        # listing_task = asyncio.ensure_future(loop.run_in_executor(
+        #     None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
 
         log.debug(other+": starting ordered parallelism")
         for task in tasks:
             data, r, url = await task
-            
-            log.debug(other+': got data from VALET "%r" (%d b)' % (data, len(data)))
-            log.debug(other+': relaying VALETS data')
+            del started_packets[os.path.basename(url)]
 
-            if data[0] == b'!'[0]:
-                socket_writer.write_eof()
-                # TODO: should be break(2), 
-                break
+            if data is not None:
+                log.debug(other+': got data from VALET "%r" (%d b)' % (data, len(data)))
+                log.debug(other+': relaying VALETS data')
 
+                if data[0] == b'!'[0]:
+                    socket_writer.write_eof()
+                    # TODO: should be break(2), 
+                    break
+
+                else:
+                    socket_writer.write(data[1:])
+                    await dump_reader_to_writer(r, socket_writer)
+                index += 1
+                #log.info("here is your url to check if its just a file: " + os.path.basename(url))
+                read_packets[os.path.basename(url)] = True
+        
+                asyncio.ensure_future(loop.run_in_executor(None, uag_session.delete_file, url))
             else:
-                socket_writer.write(data[1:])
-                await dump_reader_to_writer(r, socket_writer)
-            index += 1
-    
-            asyncio.ensure_future(loop.run_in_executor(None, uag_session.delete_file, url))
+                log.debug(other+": when polling uag, data was None")
 
         await asyncio.sleep(NEXT_TICK) 
 
@@ -498,7 +536,17 @@ async def valet_handle_server():
         asyncio.ensure_future(actor_pipe_uag_to_socket('mister', conn_token, writer))
         await actor_pipe_socket_to_uag("valet", conn_token, reader)
 
-    
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, hdrs, newurl):
+        if ALLOW_REDIRECT:
+            print("wtf")
+            return urllib.request.HTTPRedirectHandler.redirect_request(self, req, fp, code, msg, hdrs, newurl)
+        else:
+            print("hmm")
+            return None
+            #raise urllib.request.HTTPError(req.get_full_url(), code, msg, hdrs, fp)
+ 
+
 
 if __name__ == '__main__':
 
@@ -533,12 +581,14 @@ if __name__ == '__main__':
     cj = CookieJar(DefaultCookiePolicy(rfc2965=True, 
         strict_ns_domain=DefaultCookiePolicy.DomainStrict, blocked_domains=["ads.net", ".ads.net"]))
     opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), 
-        urllib.request.HTTPCookieProcessor(cj))
+        urllib.request.HTTPCookieProcessor(cj),
+        NoRedirect())
 
 
 
     uag_session = UAGSession(opener)
     uag_session.perform_auth()
+    ALLOW_REDIRECT = False
 
     loop = asyncio.get_event_loop()
 
