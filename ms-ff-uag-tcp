@@ -179,6 +179,7 @@ class UAGSession:
         except urllib.error.HTTPError:
             html_doc = ''
         else:
+            pass
             # html_doc = r.read().decode('utf-8', 'ignore');
 
         return b'ok'
@@ -384,8 +385,45 @@ async def actor_pipe_socket_to_uag(actor, conn_token, socket_reader):
 
     log.warn(actor+': reader closed')
 
-    
 import os.path
+
+async def scavenger_for_new_tasks(conn_token, actor, tasks):
+    other = "mister" if actor == "valet" else "valet"
+
+    while True:
+        listing = await loop.run_in_executor(
+            None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor) or []
+
+        tasks_id = tasks[len(tasks) - 1][0] + 1
+        # We are relying here on UAG alphanumerical sorting
+        informal_pip = 0
+        for i in listing:
+            seq_id = int(i[1].replace('pck-','').replace('.bin',''))
+
+            if seq_id < tasks_id:
+                continue
+
+            if seq_id > tasks_id:
+                log.error(str(seq_id) +" vs "+str(tasks_id))
+                log.error(other+": MISSING SEQ ORDER PACKET. ok...")
+                break
+
+            
+
+            # if i[1] not in read_packets and i[1] not in started_packets:
+            #     started_packets[i[1]] = True
+
+            task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
+                ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor+"/"+i[1]))
+
+            tasks.append( (tasks_id, task) )
+
+            tasks_id += 1
+            informal_pip += 1
+
+        if informal_pip:
+            log.info(other+": Scavenger found " +str(informal_pip)+ " pcks")
+
 async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
     # TODO: query for packet next in seq order to make the latency less
     read_packets = {}
@@ -396,48 +434,64 @@ async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
     #     None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
 
     index = 1
+    first_time = True
+    tasks = []
     while True:
 
         #log.info(other+': awaiting for packet listing')
 
         #listing = await listing_task or []
-        listing = [(True, "pck-%s.bin" % str(index).zfill(8) )]
+        # listing = [(True, "pck-%s.bin" % str(index).zfill(8) )]
 
-        log.debug(other+': awaited')
+        # log.debug(other+': awaited')
 
-        tasks = []
-        tasks_id = index
+        # tasks = []
+        # tasks_id = index
 
-        # We are relying here on UAG alphanumerical sorting
-        for i in listing:
-            seq_id = int(i[1].replace('pck-','').replace('.bin',''))
-            if seq_id != tasks_id:
-                log.error(other+": MISSING SEQ ORDER PACKET. ok...")
-                break
+        # # We are relying here on UAG alphanumerical sorting
+        # for i in listing:
+        #     seq_id = int(i[1].replace('pck-','').replace('.bin',''))
+        #     if seq_id != tasks_id:
+        #         log.error(other+": MISSING SEQ ORDER PACKET. ok...")
+        #         break
 
-            tasks_id += 1
+        #     tasks_id += 1
             
  
-            if i[1] not in read_packets and i[1] not in started_packets:
-                started_packets[i[1]] = True
-                task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
-                    ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor+"/"+i[1]))
+        #     if i[1] not in read_packets and i[1] not in started_packets:
+        #         started_packets[i[1]] = True
+        #         task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
+        #             ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor+"/"+i[1]))
 
-                tasks.append(task)
+        #         tasks.append(task)
 
-        if len(tasks):
-            log.debug(other+': awaiting for first read from UAG')
-            await asyncio.wait([tasks[0]], timeout=None)
-        else:
-            log.debug(other+': empty pck queue')
+        # if len(tasks):
+        #     log.debug(other+': awaiting for first read from UAG')
+        #     await asyncio.wait([tasks[0]], timeout=None)
+        # else:
+        #     log.debug(other+': empty pck queue')
         
+
+        # ------ assyming blocking behaviour
+        #tasks = []
+        del tasks[:]
+        task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
+            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor+"/"+("pck-%s.bin" % str(index).zfill(8)) ))
+        tasks.append( (index, task) )
+        # ------ assyming blocking behaviour
+
+        if first_time:
+            asyncio.ensure_future( scavenger_for_new_tasks(conn_token, actor, tasks) )
+            first_time = False
+
+
         # listing_task = asyncio.ensure_future(loop.run_in_executor(
         #     None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
 
         log.debug(other+": starting ordered parallelism")
         for task in tasks:
-            data, r, url = await task
-            del started_packets[os.path.basename(url)]
+            data, r, url = await task[1]
+            #del started_packets[os.path.basename(url)]
 
             if data is not None:
                 log.debug(other+': got data from VALET "%r" (%d b)' % (data, len(data)))
@@ -453,7 +507,7 @@ async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
                     await dump_reader_to_writer(r, socket_writer)
                 index += 1
                 #log.info("here is your url to check if its just a file: " + os.path.basename(url))
-                read_packets[os.path.basename(url)] = True
+                #read_packets[os.path.basename(url)] = True
         
                 asyncio.ensure_future(loop.run_in_executor(None, uag_session.delete_file, url))
             else:
@@ -539,10 +593,8 @@ async def valet_handle_server():
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, hdrs, newurl):
         if ALLOW_REDIRECT:
-            print("wtf")
             return urllib.request.HTTPRedirectHandler.redirect_request(self, req, fp, code, msg, hdrs, newurl)
         else:
-            print("hmm")
             return None
             #raise urllib.request.HTTPError(req.get_full_url(), code, msg, hdrs, fp)
  
