@@ -410,9 +410,6 @@ async def scavenger_for_new_tasks(conn_token, actor, tasks):
 
             
 
-            # if i[1] not in read_packets and i[1] not in started_packets:
-            #     started_packets[i[1]] = True
-
             task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
                 ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor+"/"+i[1]))
 
@@ -425,55 +422,15 @@ async def scavenger_for_new_tasks(conn_token, actor, tasks):
             log.info(other+": Scavenger found " +str(informal_pip)+ " pcks")
 
 async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
-    # TODO: query for packet next in seq order to make the latency less
-    read_packets = {}
-    started_packets = {}
-    other = "mister" if actor == "valet" else "valet"
 
-    # listing_task = asyncio.ensure_future(loop.run_in_executor(
-    #     None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
+    other = "mister" if actor == "valet" else "valet"
 
     index = 1
     first_time = True
     tasks = []
     while True:
 
-        #log.info(other+': awaiting for packet listing')
-
-        #listing = await listing_task or []
-        # listing = [(True, "pck-%s.bin" % str(index).zfill(8) )]
-
-        # log.debug(other+': awaited')
-
-        # tasks = []
-        # tasks_id = index
-
-        # # We are relying here on UAG alphanumerical sorting
-        # for i in listing:
-        #     seq_id = int(i[1].replace('pck-','').replace('.bin',''))
-        #     if seq_id != tasks_id:
-        #         log.error(other+": MISSING SEQ ORDER PACKET. ok...")
-        #         break
-
-        #     tasks_id += 1
-            
- 
-        #     if i[1] not in read_packets and i[1] not in started_packets:
-        #         started_packets[i[1]] = True
-        #         task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
-        #             ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor+"/"+i[1]))
-
-        #         tasks.append(task)
-
-        # if len(tasks):
-        #     log.debug(other+': awaiting for first read from UAG')
-        #     await asyncio.wait([tasks[0]], timeout=None)
-        # else:
-        #     log.debug(other+': empty pck queue')
-        
-
         # ------ assyming blocking behaviour
-        #tasks = []
         del tasks[:]
         task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
             ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor+"/"+("pck-%s.bin" % str(index).zfill(8)) ))
@@ -484,14 +441,9 @@ async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
             asyncio.ensure_future( scavenger_for_new_tasks(conn_token, actor, tasks) )
             first_time = False
 
-
-        # listing_task = asyncio.ensure_future(loop.run_in_executor(
-        #     None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor))
-
         log.debug(other+": starting ordered parallelism")
         for task in tasks:
             data, r, url = await task[1]
-            #del started_packets[os.path.basename(url)]
 
             if data is not None:
                 log.debug(other+': got data from VALET "%r" (%d b)' % (data, len(data)))
@@ -505,9 +457,8 @@ async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
                 else:
                     socket_writer.write(data[1:])
                     await dump_reader_to_writer(r, socket_writer)
+
                 index += 1
-                #log.info("here is your url to check if its just a file: " + os.path.basename(url))
-                #read_packets[os.path.basename(url)] = True
         
                 asyncio.ensure_future(loop.run_in_executor(None, uag_session.delete_file, url))
             else:
@@ -551,15 +502,6 @@ async def mister_handle_client(client_reader, client_writer):
     
     await actor_pipe_socket_to_uag("mister", conn_token, client_reader)
 
-
-# async def mister_poll_valet(client_writer, conn_token, opener):
-#     await actor_pipe_uag_to_socket('valet', conn_token, client_writer)
-
-
-# async def valet_poll_mister(writer, conn_token,opener):
-#     await actor_pipe_uag_to_socket('mister', conn_token, writer)
-
-
 async def valet_handle_server():
     # server is capable of only one connection at a time.
 
@@ -595,9 +537,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         if ALLOW_REDIRECT:
             return urllib.request.HTTPRedirectHandler.redirect_request(self, req, fp, code, msg, hdrs, newurl)
         else:
-            return None
-            #raise urllib.request.HTTPError(req.get_full_url(), code, msg, hdrs, fp)
- 
+            return None 
 
 
 if __name__ == '__main__':
