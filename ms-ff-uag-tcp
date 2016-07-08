@@ -371,18 +371,18 @@ async def scavenger_for_new_tasks(conn_token, actor, tasks):
         if informal_pip:
             log.info(other+": Scavenger found " +str(informal_pip)+ " pcks")
 
-async def actor_pipe_socket_to_uag(actor, conn_token, socket_reader):
+async def actor_pipe_socket_to_uag(actor, conn_object):
 
     index = 1
     sent_data = {}
     kept_data = {}
 
-    while not socket_reader.at_eof():
+    while not conn_object.reader.at_eof():
 
         while sum(kept_data.values()) > 4 * 1024*1024:
 
             files = await loop.run_in_executor(None, 
-                uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor)
+                uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_object.conn_token+"-est/line-"+actor)
 
             new_sent = {}
 
@@ -398,9 +398,9 @@ async def actor_pipe_socket_to_uag(actor, conn_token, socket_reader):
 
         log.debug(actor+': waiting for a read from server')
 
-        data = await socket_reader.read(BUFFER_SIZE)
+        data = await conn_object.reader.read(BUFFER_SIZE)
 
-        if socket_reader.at_eof():
+        if conn_object.reader.at_eof():
             data = b'!' + data
         else:
             data = b' ' + data
@@ -409,7 +409,7 @@ async def actor_pipe_socket_to_uag(actor, conn_token, socket_reader):
         log.debug(actor+': sending data to MISTER %r (%d b) ' % (data, len(data)))
 
         asyncio.ensure_future(loop.run_in_executor(None, 
-            uag_session.put_file, gen_pck_uri(conn_token, actor, index), data))
+            uag_session.put_file, gen_pck_uri(conn_object.conn_token, actor, index), data))
         
         log.info(actor+': putting index %d as %d b' % (index, len(data)))
 
@@ -421,7 +421,7 @@ async def actor_pipe_socket_to_uag(actor, conn_token, socket_reader):
     log.warn(actor+': reader closed')
 
 
-async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
+async def actor_pipe_uag_to_socket(actor, conn_object):
 
     other = "mister" if actor == "valet" else "valet"
 
@@ -433,12 +433,12 @@ async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
         # ------ assyming blocking behaviour
         del tasks[:]
         task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
-            ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor+"/"+("pck-%s.bin" % str(index).zfill(8)) ))
+            ".ms-ff-uag-tcp-data/"+conn_object.conn_token+"-est/line-"+actor+"/"+("pck-%s.bin" % str(index).zfill(8)) ))
         tasks.append( (index, task) )
         # ------ assyming blocking behaviour
 
         if first_time:
-            asyncio.ensure_future( scavenger_for_new_tasks(conn_token, actor, tasks) )
+            asyncio.ensure_future( scavenger_for_new_tasks(conn_object.conn_token, actor, tasks) )
             first_time = False
 
         log.debug(other+": starting ordered parallelism")
@@ -450,13 +450,13 @@ async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
                 log.debug(other+': relaying VALETS data')
 
                 if data[0] == b'!'[0]:
-                    socket_writer.write_eof()
+                    conn_object.writer.write_eof()
                     # TODO: should be break(2), 
                     break
 
                 else:
-                    socket_writer.write(data[1:])
-                    await dump_reader_to_writer(r, socket_writer)
+                    conn_object.writer.write(data[1:])
+                    await dump_reader_to_writer(r, conn_object.writer)
                 index += 1
         
                 asyncio.ensure_future(loop.run_in_executor(None, uag_session.delete_file, url))
@@ -561,8 +561,8 @@ async def valet_handle_server():
         reader, writer = await conn_task
         log.info("VALET: established server conn for %s" % conn_token)
 
-        asyncio.ensure_future(actor_pipe_uag_to_socket('mister', conn_object, writer))
-        await actor_pipe_socket_to_uag("valet", conn_object, reader)
+        asyncio.ensure_future(actor_pipe_uag_to_socket('mister', conn_object))
+        await actor_pipe_socket_to_uag("valet", conn_object)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
