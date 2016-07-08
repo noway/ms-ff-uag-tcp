@@ -499,11 +499,10 @@ async def mister_communicate_client(client_reader, client_writer):
             continue
         
         if ListDir(False, "line-mister") in data:
-            pprint(data)
-            log.info("connection established!!")
+            log.info("Connection established!")
             break
         else:
-            log.info("waiting to synack from server")
+            log.info("Waiting to synack from server")
 
         # await asyncio.sleep(NEXT_TICK)
     
