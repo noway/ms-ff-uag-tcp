@@ -306,30 +306,15 @@ class UAGSession:
 
 
         
-def gen_pck_uri(token, line, index):
-    return ".ms-ff-uag-tcp-data/%s-est/line-%s/pck-%s.bin" % (token, line, str(index).zfill(8))
-
-
-async def dump_reader_to_writer(reader, writer):
-    doc = await loop.run_in_executor(None, reader.read, 16*1024)
-    writer.write(doc)
-
-    while doc:
-        doc = await loop.run_in_executor(None, reader.read, 16*1024)
-        writer.write(doc)
-
 def mister_accept_client(client_reader, client_writer):
     if args.server:
         log.error("Something gone terribly wrong")
     log.info("New Connection")
-    task = asyncio.ensure_future(mister_handle_client(client_reader, client_writer))
-
-
+    task = asyncio.ensure_future(mister_communicate_client(client_reader, client_writer))
 
 
 def future_async(*args):
     return asyncio.ensure_future(loop.run_in_executor(None, *args))
-
 
 
 async def scavenger_for_new_tasks(actor, conn, tasks):
@@ -379,7 +364,7 @@ async def actor_pipe_socket_to_uag(actor, conn):
             new_sent = {}
 
             for i in files:
-                key = int(i[1].replace('pck-','').replace('.bin',''))
+                key = uagNetworkHandle.pck_uri_to_idx(i[1])
                 new_sent[key] = sent_data[key]
 
             kept_data = new_sent
@@ -422,7 +407,6 @@ async def actor_pipe_uag_to_socket(actor, conn):
     while True:
 
         # ------ assyming blocking behaviour
-       
         del tasks[:]
         task = future_async(conn.uagnet.commence_packet, actor, index)
         tasks.append( (index, task) )
@@ -447,7 +431,12 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
                 else:
                     conn.writer.write(data[1:])
-                    await dump_reader_to_writer(r, conn.writer)
+
+                    while True:
+                        doc = await future_async(r.read, 16*1024)
+                        if not doc:
+                            break
+                        conn.writer.write(doc)
                 
                 future_async(conn.uagnet.ack_packet, actor, index)
 
@@ -464,13 +453,12 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
 
 
-async def mister_handle_client(client_reader, client_writer):
+async def mister_communicate_client(client_reader, client_writer):
 
     conn = connectionHandle(uagNetworkHandle(uag_session))
     conn.writer = client_writer
     conn.reader = client_reader
-    conn.uagnet.token = datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + ('%08X' % random.randrange(16**8))
-
+    conn.uagnet.token = uagNetworkHandle.gen_token()
     conn.uagnet.do_syn()
 
     task = asyncio.ensure_future(actor_pipe_uag_to_socket('valet', conn))
@@ -495,9 +483,9 @@ async def mister_handle_client(client_reader, client_writer):
     await actor_pipe_socket_to_uag("mister", conn)
 
 
-async def valet_handle_server():
-    # server is capable of only one connection at a time.
+async def valet_communicate_server():
 
+    # server is capable of only one connection at a time.
     while True:
 
         delayed_open = None
@@ -508,13 +496,12 @@ async def valet_handle_server():
             data = conn.uagnet.lookup_syns()
 
             if len(data):
-                conn.uagnet.token = data[0][1].replace('.con', '')
-                
+                conn.uagnet.token = uagNetworkHandle.conn_uri_to_token(data[0][1])
+
                 delayed_open = asyncio.ensure_future(asyncio.open_connection(
                     args.server.split(':')[0], int(args.server.split(':')[1])))               
 
                 conn.uagnet.do_synack()
-
                 break
 
             await asyncio.sleep(NEXT_TICK)
@@ -537,6 +524,7 @@ class connectionHandle:
     def __init__(self, uagnet):
         self.uagnet = uagnet
 
+
 class uagNetworkHandle:
 
     token = ''
@@ -545,32 +533,48 @@ class uagNetworkHandle:
     def __init__(self, uag):
         self.uag = uag
 
+    @staticmethod
+    def pck_uri(token, line, idx):
+        return ".ms-ff-uag-tcp-data/%s-est/line-%s/pck-%s.bin" % (token, line, str(idx).zfill(8))
+
+    @staticmethod
+    def pck_uri_to_idx(uri):
+        return int(os.path.basename(uri).replace('pck-','').replace('.bin',''))
+
+    @staticmethod
+    def conn_uri_to_token(uri):
+        return os.path.basename(uri).replace('.con', '')
+
+    @staticmethod
+    def gen_token():
+        return datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + ('%08X' % random.randrange(16**8))
+
     def do_syn(self):
-        self.uag.put_file(".ms-ff-uag-tcp-data/to-connect/"+self.token+".con", b'')
+        self.uag.put_file(".ms-ff-uag-tcp-data/to-connect/%s.con" % self.token, b'')
 
     def lookup_syns(self):
         return self.uag.list_folder(".ms-ff-uag-tcp-data/to-connect/")
 
     def do_synack(self):
-        self.uag.create_folder(".ms-ff-uag-tcp-data/"+self.token+"-est") # not like in spec
-        self.uag.create_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/line-mister") # not like in spec
-        self.uag.create_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/line-valet") # not like in spec
-        self.uag.delete_file(".ms-ff-uag-tcp-data/to-connect/"+self.token+".con")
+        self.uag.create_folder(".ms-ff-uag-tcp-data/%s-est" % self.token) 
+        self.uag.create_folder(".ms-ff-uag-tcp-data/%s-est/line-mister" % self.token)
+        self.uag.create_folder(".ms-ff-uag-tcp-data/%s-est/line-valet" % self.token) 
+        self.uag.delete_file(".ms-ff-uag-tcp-data/to-connect/%s.con" % self.token)
 
     def lookup_synack(self):
-        return self.uag.list_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/")
+        return self.uag.list_folder(".ms-ff-uag-tcp-data/%s-est/" % self.token)
 
-    def commence_packet(self, line, index):
-        return self.uag.get_content(".ms-ff-uag-tcp-data/"+self.token+"-est/line-"+line+"/"+("pck-%s.bin" % str(index).zfill(8)) )
+    def commence_packet(self, line, idx):
+        return self.uag.get_content(uagNetworkHandle.pck_uri(self.token, line, idx))
 
-    def send_packet(self, line, index, packet):
-        self.uag.put_file(gen_pck_uri(self.token, line, index), packet)
+    def send_packet(self, line, idx, packet):
+        self.uag.put_file(uagNetworkHandle.pck_uri(self.token, line, idx), packet)
 
     def unrecieved_packets(self, line):
-        return self.uag.list_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/line-"+line)
+        return self.uag.list_folder(".ms-ff-uag-tcp-data/%s-est/line-%s" % (self.token, line))
 
-    def ack_packet(self, line, index):
-        self.uag.delete_file(gen_pck_uri(self.token, line, index))
+    def ack_packet(self, line, idx):
+        self.uag.delete_file(uagNetworkHandle.pck_uri(self.token, line, idx))
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -630,7 +634,7 @@ if __name__ == '__main__':
 
 
     if args.server:
-        f = asyncio.ensure_future(valet_handle_server())
+        f = asyncio.ensure_future(valet_communicate_server())
         log.info("Waiting for connection request")
     else:
         f = asyncio.start_server(mister_accept_client, host=args.client.split(':')[0], port=int(args.client.split(':')[1]))
