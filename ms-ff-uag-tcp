@@ -36,7 +36,10 @@ from bs4 import BeautifulSoup
 
 from requests_toolbelt import MultipartEncoder
 
+
 log = logging.getLogger(__name__)
+
+sys.setcheckinterval(0)
 
 ALARM_GARBAGE_SIZE = 1024*1024*4
 BIG_GARBAGE_SIZE = 1024*1024*2
@@ -86,6 +89,21 @@ ARGS.add_argument(
     default=0, type=int, help="Don't show debug info")
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, hdrs, newurl):
+        if ALLOW_REDIRECT:
+            return urllib.request.HTTPRedirectHandler.redirect_request(
+                self, req, fp, code, msg, hdrs, newurl)
+        else:
+            return None
+
+
+PckTask = namedtuple('PckTask', 'idx, task')
+
+
+ListDir = namedtuple('ListDir', 'is_file, name')
+
+
 class Address:
     host = None
     port = None
@@ -110,10 +128,80 @@ class Address:
     __repr__ = __str__
 
 
-PckTask = namedtuple('PckTask', 'idx, task')
+class connectionHandle:
+    uagnet = None
+
+    reader = None
+    writer = None
+
+    is_connected_or_connecting = False
+
+    def __init__(self, uagnet):
+        self.uagnet = uagnet
 
 
-ListDir = namedtuple('ListDir', 'is_file, name')
+class uagNetworkHandle:
+
+    token = ''
+    uag = None
+
+    def __init__(self, uag):
+        self.uag = uag
+
+    @staticmethod
+    def pck_uri(token, line, idx):
+        return ".ms-ff-uag-tcp-data/%s-est/line-%s/pck-%s.bin" % (
+            token, line, str(idx).zfill(8))
+
+    @staticmethod
+    def pck_uri_to_idx(uri):
+        return int(os.path.basename(uri).replace(
+            'pck-', '').replace('.bin', ''))
+
+    @staticmethod
+    def conn_uri_to_token(uri):
+        return os.path.basename(uri).replace('.con', '')
+
+    @staticmethod
+    def gen_token():
+        return datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + (
+            '%08X' % random.randrange(16**8))
+
+    def do_syn(self):
+        self.uag.put_file(
+            ".ms-ff-uag-tcp-data/to-connect/%s.con" % self.token, b'')
+
+    def lookup_syns(self):
+        return self.uag.list_folder(".ms-ff-uag-tcp-data/to-connect/")
+
+    def do_synack(self):
+        self.uag.create_folder(
+            ".ms-ff-uag-tcp-data/%s-est" % self.token)
+        self.uag.create_folder(
+            ".ms-ff-uag-tcp-data/%s-est/line-mister" % self.token)
+        self.uag.create_folder(
+            ".ms-ff-uag-tcp-data/%s-est/line-valet" % self.token)
+        self.uag.delete_file(
+            ".ms-ff-uag-tcp-data/to-connect/%s.con" % self.token)
+
+    def lookup_synack(self):
+        return self.uag.list_folder(
+            ".ms-ff-uag-tcp-data/%s-est/" % self.token)
+
+    def commence_packet(self, line, idx):
+        return self.uag.get_content(
+            uagNetworkHandle.pck_uri(self.token, line, idx))
+
+    def send_packet(self, line, idx, packet):
+        self.uag.put_file(
+            uagNetworkHandle.pck_uri(self.token, line, idx), packet)
+
+    def unrecieved_packets(self, line):
+        return self.uag.list_folder(
+            ".ms-ff-uag-tcp-data/%s-est/line-%s" % (self.token, line))
+
+    def ack_packet(self, line, idx):
+        self.uag.delete_file(uagNetworkHandle.pck_uri(self.token, line, idx))
 
 
 class UAGSession:
@@ -386,6 +474,10 @@ async def scavenge_for_new_tasks(actor, conn, tasks):
             tasks_id += 1
             informal_pip += 1
 
+            if informal_pip > 5:
+                # rate limit
+                break
+
         if informal_pip:
             log.info(other + ": Scavenger found %d pcks" % informal_pip)
 
@@ -475,12 +567,15 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
                 else:
                     conn.writer.write(data[1:])
-
+                    dlen = 100
                     while True:
                         doc = await future_async(r.read, SMALL_BUFFER_SIZE)
                         conn.writer.write(doc)
                         if not doc:
                             break
+                        dlen += len(doc)
+
+                    log.info(other+": feeded %d as %d b" % (idx, dlen))
 
                 future_async(conn.uagnet.ack_packet, actor, idx)
 
@@ -561,90 +656,6 @@ async def valet_contact_server(uag):
         asyncio.ensure_future(actor_pipe_uag_to_socket('mister', conn))
         await actor_pipe_socket_to_uag("valet", conn)
 
-
-class connectionHandle:
-    uagnet = None
-
-    reader = None
-    writer = None
-
-    is_connected_or_connecting = False
-
-    def __init__(self, uagnet):
-        self.uagnet = uagnet
-
-
-class uagNetworkHandle:
-
-    token = ''
-    uag = None
-
-    def __init__(self, uag):
-        self.uag = uag
-
-    @staticmethod
-    def pck_uri(token, line, idx):
-        return ".ms-ff-uag-tcp-data/%s-est/line-%s/pck-%s.bin" % (
-            token, line, str(idx).zfill(8))
-
-    @staticmethod
-    def pck_uri_to_idx(uri):
-        return int(os.path.basename(uri).replace(
-            'pck-', '').replace('.bin', ''))
-
-    @staticmethod
-    def conn_uri_to_token(uri):
-        return os.path.basename(uri).replace('.con', '')
-
-    @staticmethod
-    def gen_token():
-        return datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + (
-            '%08X' % random.randrange(16**8))
-
-    def do_syn(self):
-        self.uag.put_file(
-            ".ms-ff-uag-tcp-data/to-connect/%s.con" % self.token, b'')
-
-    def lookup_syns(self):
-        return self.uag.list_folder(".ms-ff-uag-tcp-data/to-connect/")
-
-    def do_synack(self):
-        self.uag.create_folder(
-            ".ms-ff-uag-tcp-data/%s-est" % self.token)
-        self.uag.create_folder(
-            ".ms-ff-uag-tcp-data/%s-est/line-mister" % self.token)
-        self.uag.create_folder(
-            ".ms-ff-uag-tcp-data/%s-est/line-valet" % self.token)
-        self.uag.delete_file(
-            ".ms-ff-uag-tcp-data/to-connect/%s.con" % self.token)
-
-    def lookup_synack(self):
-        return self.uag.list_folder(
-            ".ms-ff-uag-tcp-data/%s-est/" % self.token)
-
-    def commence_packet(self, line, idx):
-        return self.uag.get_content(
-            uagNetworkHandle.pck_uri(self.token, line, idx))
-
-    def send_packet(self, line, idx, packet):
-        self.uag.put_file(
-            uagNetworkHandle.pck_uri(self.token, line, idx), packet)
-
-    def unrecieved_packets(self, line):
-        return self.uag.list_folder(
-            ".ms-ff-uag-tcp-data/%s-est/line-%s" % (self.token, line))
-
-    def ack_packet(self, line, idx):
-        self.uag.delete_file(uagNetworkHandle.pck_uri(self.token, line, idx))
-
-
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, hdrs, newurl):
-        if ALLOW_REDIRECT:
-            return urllib.request.HTTPRedirectHandler.redirect_request(
-                self, req, fp, code, msg, hdrs, newurl)
-        else:
-            return None
 
 if __name__ == '__main__':
 
