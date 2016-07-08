@@ -78,6 +78,30 @@ ARGS.add_argument(
 ARGS.add_argument(
     '--quiet', action="store", dest='quiet',
     default=0, type=int, help="Don't show debug info")
+
+class Address:
+    host = None
+    port = None
+
+    def __new__(cls, addr):
+        try:
+            addr = addr.split(":")
+            host = addr[0]
+            port = int(addr[1])
+            return super(Address, cls).__new__(cls)
+        except (AttributeError, KeyError) as e:
+            return None
+
+    def __init__(self, addr):
+        addr = addr.split(":")
+        self.host = addr[0]
+        self.port = int(addr[1])
+
+    def __str__(self):
+        return 'Address(host="%s", port=%d)' % (self.host, self.port)
+
+    __repr__ = __str__
+
         
 class UAGSession:
     """Class for working with UAG"""
@@ -183,10 +207,8 @@ class UAGSession:
             pass
             # html_doc = r.read().decode('utf-8', 'ignore');
 
-        return b'ok'
-        #html_doc = r.read().decode('utf-8', 'ignore');
-        
         #return html_doc
+        return b'ok'        
 
     def create_folder(self, directory):
         
@@ -317,7 +339,7 @@ def future_async(*args):
     return asyncio.ensure_future(loop.run_in_executor(None, *args))
 
 
-async def scavenger_for_new_tasks(actor, conn, tasks):
+async def scavenge_for_new_tasks(actor, conn, tasks):
     other = "mister" if actor == "valet" else "valet"
 
     while True:
@@ -413,7 +435,7 @@ async def actor_pipe_uag_to_socket(actor, conn):
         # ------ assyming blocking behaviour
 
         if first_time:
-            asyncio.ensure_future( scavenger_for_new_tasks(actor, conn, tasks) )
+            asyncio.ensure_future( scavenge_for_new_tasks(actor, conn, tasks) )
             first_time = False
 
         log.debug(other+": starting ordered parallelism")
@@ -499,7 +521,7 @@ async def valet_communicate_server():
                 conn.uagnet.token = uagNetworkHandle.conn_uri_to_token(data[0][1])
 
                 delayed_open = asyncio.ensure_future(asyncio.open_connection(
-                    args.server.split(':')[0], int(args.server.split(':')[1])))               
+                    args.server.host, args.server.port))               
 
                 conn.uagnet.do_synack()
                 break
@@ -584,6 +606,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         else:
             return None
 
+from collections import namedtuple
+
 
 if __name__ == '__main__':
 
@@ -595,6 +619,9 @@ if __name__ == '__main__':
     args = ARGS.parse_args()
     with open(args.auth, 'r') as args.auth:
         auth_creds = args.auth.read()
+
+    args.server = Address(args.server)
+    args.client = Address(args.client)
 
     if args.quiet == 2:
         log.error('Logging error only')
@@ -637,7 +664,7 @@ if __name__ == '__main__':
         f = asyncio.ensure_future(valet_communicate_server())
         log.info("Waiting for connection request")
     else:
-        f = asyncio.start_server(mister_accept_client, host=args.client.split(':')[0], port=int(args.client.split(':')[1]))
+        f = asyncio.start_server(mister_accept_client, host=args.client.host, port=args.client.port)
         log.info("Server is listening on port 8000")
 
     loop.run_until_complete(f)
@@ -647,9 +674,9 @@ if __name__ == '__main__':
 
 
     # Unit tests would be of use
-    #create_folder(opener, main_url, 'testing-folders')
-    #pprint(list_folder(opener, main_url, ''))
-    #pprint(get_content(opener, main_url, 'ms-ff-uag-tcp.md'))
-    #put_file(opener, main_url, '00000000.bin', b'SSH-2.0-OpenSSH_6.7p1 Debian-5+deb8u2\r\n')
-    #delete_file(opener, main_url, 'testing-132-folders')
+    # create_folder(opener, main_url, 'testing-folders')
+    # pprint(list_folder(opener, main_url, ''))
+    # pprint(get_content(opener, main_url, 'ms-ff-uag-tcp.md'))
+    # put_file(opener, main_url, '00000000.bin', b'SSH-2.0-OpenSSH_6.7p1 Debian-5+deb8u2\r\n')
+    # delete_file(opener, main_url, 'testing-132-folders')
     
