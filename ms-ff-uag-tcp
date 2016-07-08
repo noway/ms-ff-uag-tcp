@@ -457,7 +457,6 @@ async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
                 else:
                     socket_writer.write(data[1:])
                     await dump_reader_to_writer(r, socket_writer)
-
                 index += 1
         
                 asyncio.ensure_future(loop.run_in_executor(None, uag_session.delete_file, url))
@@ -475,53 +474,86 @@ async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
 
 async def mister_handle_client(client_reader, client_writer):
 
-    conn_token = datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + ('%08X' % random.randrange(16**8))
+    conn_object = connHandle(uag_session)
 
-    uag_session.put_file(".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con", b'')
+    conn_object.writer = client_writer
+    conn_object.reader = client_reader
+    conn_object.conn_token = datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + ('%08X' % random.randrange(16**8))
 
-    task = asyncio.ensure_future(actor_pipe_uag_to_socket('valet', conn_token, client_writer))
+    conn_object.do_syn()
+
+    task = asyncio.ensure_future(actor_pipe_uag_to_socket('valet', conn_object))
 
     while True:
-        data = uag_session.list_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/")
+        data = conn_object.lookup_synack()
 
         if data is None:
             log.info("data is None")
             await asyncio.sleep(NEXT_TICK)
             continue
         
-        # pprint(data)
-        
         if (False, "line-mister") in data:
             pprint(data)
             log.info("connection established!!")
             break
         else:
-            log.info("waiting to ack from server")
+            log.info("waiting to synack from server")
 
         await asyncio.sleep(NEXT_TICK)
     
-    await actor_pipe_socket_to_uag("mister", conn_token, client_reader)
+    await actor_pipe_socket_to_uag("mister", conn_object)
+
+
+class connHandle:
+
+    conn_token = ''
+    uag_session = None
+    reader = None
+    writer = None
+
+    def __init__(self, uag_session):
+        self.uag_session = uag_session
+
+    def do_syn(self):
+        uag_session.put_file(".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con", b'')
+        pass
+
+    def lookup_syns(self):
+        return self.uag_session.list_folder(".ms-ff-uag-tcp-data/to-connect/")
+
+    def do_synack(self):
+        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est") # not like in spec
+        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister") # not like in spec
+        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet") # not like in spec
+        self.uag_session.delete_file(".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con")
+
+    def lookup_synack(self):
+        return uag_session.list_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/")
+
 
 async def valet_handle_server():
+
     # server is capable of only one connection at a time.
 
     while True:
 
         conn_token = ""
         conn_task = None
+        conn_object = connHandle(uag_session)
 
         while True:
-            data = uag_session.list_folder(".ms-ff-uag-tcp-data/to-connect/")
+            data = conn_object.lookup_syns()
+
             if len(data):
-                conn_token = data[0][1].replace('.con', '')
+                conn_object.conn_token = data[0][1].replace('.con', '')
                 
-                conn_task = asyncio.ensure_future(asyncio.open_connection(args.server.split(':')[0], int(args.server.split(':')[1])))
-                
-                uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est") # not like in spec
-                uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister") # not like in spec
-                uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet") # not like in spec
-                uag_session.delete_file(".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con")
+                conn_task = asyncio.ensure_future(asyncio.open_connection(
+                    args.server.split(':')[0], int(args.server.split(':')[1])))               
+
+                conn_object.do_synack()
+
                 break
+
             await asyncio.sleep(NEXT_TICK)
 
         log.info("VALET: new connection from MISTER %s" % conn_token)
@@ -529,15 +561,16 @@ async def valet_handle_server():
         reader, writer = await conn_task
         log.info("VALET: established server conn for %s" % conn_token)
 
-        asyncio.ensure_future(actor_pipe_uag_to_socket('mister', conn_token, writer))
-        await actor_pipe_socket_to_uag("valet", conn_token, reader)
+        asyncio.ensure_future(actor_pipe_uag_to_socket('mister', conn_object, writer))
+        await actor_pipe_socket_to_uag("valet", conn_object, reader)
+
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, hdrs, newurl):
         if ALLOW_REDIRECT:
             return urllib.request.HTTPRedirectHandler.redirect_request(self, req, fp, code, msg, hdrs, newurl)
         else:
-            return None 
+            return None
 
 
 if __name__ == '__main__':
