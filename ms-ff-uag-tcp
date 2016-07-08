@@ -51,7 +51,7 @@ ARGS = argparse.ArgumentParser(description="ms-ff-uag-tcp")
 
 # modern UA, otherwise it thinks i'm on mobile
 USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/50.0.2661.75 Safari/537.36")
+              "(KHTML, like Gecko) Chrome/50.0.2661.75 Safari/537.36")
 
 ACCEPT = "*/*"
 ALLOW_REDIRECT = True
@@ -195,7 +195,8 @@ class UAGSession:
         folder_escaped = quote(folder, safe='')
         folder_canonical = folder.replace('/', '\\').replace('\\\\', '//')
 
-        create_folder_url = urljoin(self.main_url,
+        create_folder_url = urljoin(
+            self.main_url,
             "../filesharing/FileSharingExt/ShareAccessExt.dll?P=" +
             folder_escaped + "&overwrite=on")
 
@@ -232,7 +233,8 @@ class UAGSession:
         folder = args.dir + "/" + directory
         folder_escaped = quote(folder, safe='')
 
-        create_folder_url = urljoin(self.main_url,
+        create_folder_url = urljoin(
+            self.main_url,
             "../filesharing/newfolder.asp?Folder=" + folder_escaped)
 
         files = OrderedDict([
@@ -265,7 +267,8 @@ class UAGSession:
         folder = args.dir + "/" + directory
         folder_escaped = quote(folder, safe='')
 
-        create_folder_url = urljoin(self.main_url,
+        create_folder_url = urljoin(
+            self.main_url,
             "../filesharing/filelist.asp?S=" + folder_escaped + "&T=9")
 
         url = urllib.request.Request(create_folder_url)
@@ -302,9 +305,10 @@ class UAGSession:
         folder = args.dir + "/" + file
         folder_escaped = quote(folder, safe='')
 
-        create_folder_url = urljoin(self.main_url,
-            "../filesharing/filelist.asp?S=" +
-            folder_escaped + "&action=1&T=9")
+        create_folder_url = urljoin(
+            self.main_url,
+            "../filesharing/filelist.asp?S=" + folder_escaped +
+            "&action=1&T=9")
 
         url = urllib.request.Request(create_folder_url)
 
@@ -325,7 +329,8 @@ class UAGSession:
         folder = args.dir + "/" + file
         folder_escaped = quote(folder, safe='')
 
-        create_folder_url = urljoin(self.main_url,
+        create_folder_url = urljoin(
+            self.main_url,
             "../filesharing/FileSharingExt/?OPEN&P=" + folder_escaped)
 
         url = urllib.request.Request(create_folder_url)
@@ -339,9 +344,10 @@ class UAGSession:
             doc = ''
 
         doc = r.read(100)
+        doc_text = doc.decode('cp437', 'ignore')
+        is_404 = doc_text.find("content='0;URL=errorPage.asp?error=404")
 
-        if doc == '' or doc.decode('cp437', 'ignore').find(
-            "content='0;URL=errorPage.asp?error=404") != -1:
+        if doc == '' or is_404 != -1:
             return (None, None, file)
 
         return (doc, r, file)
@@ -597,25 +603,25 @@ class uagNetworkHandle:
             '%08X' % random.randrange(16**8))
 
     def do_syn(self):
-        self.uag.put_file(".ms-ff-uag-tcp-data/to-connect/%s.con" %
-            self.token, b'')
+        self.uag.put_file(
+            ".ms-ff-uag-tcp-data/to-connect/%s.con" % self.token, b'')
 
     def lookup_syns(self):
         return self.uag.list_folder(".ms-ff-uag-tcp-data/to-connect/")
 
     def do_synack(self):
-        self.uag.create_folder(".ms-ff-uag-tcp-data/%s-est" %
-            self.token)
-        self.uag.create_folder(".ms-ff-uag-tcp-data/%s-est/line-mister" %
-            self.token)
-        self.uag.create_folder(".ms-ff-uag-tcp-data/%s-est/line-valet" %
-            self.token)
-        self.uag.delete_file(".ms-ff-uag-tcp-data/to-connect/%s.con" %
-            self.token)
+        self.uag.create_folder(
+            ".ms-ff-uag-tcp-data/%s-est" % self.token)
+        self.uag.create_folder(
+            ".ms-ff-uag-tcp-data/%s-est/line-mister" % self.token)
+        self.uag.create_folder(
+            ".ms-ff-uag-tcp-data/%s-est/line-valet" % self.token)
+        self.uag.delete_file(
+            ".ms-ff-uag-tcp-data/to-connect/%s.con" % self.token)
 
     def lookup_synack(self):
-        return self.uag.list_folder(".ms-ff-uag-tcp-data/%s-est/" %
-            self.token)
+        return self.uag.list_folder(
+            ".ms-ff-uag-tcp-data/%s-est/" % self.token)
 
     def commence_packet(self, line, idx):
         return self.uag.get_content(
@@ -626,8 +632,8 @@ class uagNetworkHandle:
             uagNetworkHandle.pck_uri(self.token, line, idx), packet)
 
     def unrecieved_packets(self, line):
-        return self.uag.list_folder(".ms-ff-uag-tcp-data/%s-est/line-%s" % (
-            self.token, line))
+        return self.uag.list_folder(
+            ".ms-ff-uag-tcp-data/%s-est/line-%s" % (self.token, line))
 
     def ack_packet(self, line, idx):
         self.uag.delete_file(uagNetworkHandle.pck_uri(self.token, line, idx))
@@ -673,9 +679,11 @@ if __name__ == '__main__':
     log.addHandler(ch)
 
     ctx = ssl.create_default_context(cafile=args.cafile)
-    cj = CookieJar(DefaultCookiePolicy(rfc2965=True,
-        strict_ns_domain=DefaultCookiePolicy.DomainStrict,
-        blocked_domains=["ads.net", ".ads.net"]))
+    cj = CookieJar(
+        DefaultCookiePolicy(
+            rfc2965=True,
+            strict_ns_domain=DefaultCookiePolicy.DomainStrict,
+            blocked_domains=["ads.net", ".ads.net"]))
 
     opener = urllib.request.build_opener(
         urllib.request.HTTPSHandler(context=ctx),
