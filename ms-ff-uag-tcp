@@ -241,10 +241,6 @@ class UAGSession:
         else:
             html_doc = r.read().decode('utf-8', 'ignore');
 
-        # r = self.opener.open(url)
-        # html_doc = r.read().decode('utf-8', 'ignore');
-
-
         return_arr = []
         try:
             soup = BeautifulSoup(html_doc, 'html.parser')
@@ -343,9 +339,6 @@ async def scavenger_for_new_tasks(actor, uagnet, tasks):
 
         listing = await future_async(uagnet.unrecieved_packets, actor) or []
 
-        # listing = await loop.run_in_executor(
-        #     None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor) or []
-
         tasks_id = tasks[len(tasks) - 1][0] + 1
 
         # We are relying here on UAG alphanumerical sorting
@@ -361,10 +354,6 @@ async def scavenger_for_new_tasks(actor, uagnet, tasks):
                 log.error(str(seq_id) +" vs "+str(tasks_id))
                 log.error(other+": MISSING SEQ ORDER PACKET. ok...")
                 break
-
-
-            # asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
-            #    ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor+"/"+i[1]))
 
             task = future_async(uagnet.commence_packet, actor, tasks_id)
             tasks.append( (tasks_id, task) )
@@ -385,8 +374,6 @@ async def actor_pipe_socket_to_uag(actor, uagnet):
 
         while sum(kept_data.values()) > 4 * 1024*1024:
 
-            # files = await loop.run_in_executor(None, 
-            #     uag_session.list_folder, ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor)
             files = await future_async(uagnet.unrecieved_packets, actor)
 
             new_sent = {}
@@ -413,9 +400,6 @@ async def actor_pipe_socket_to_uag(actor, uagnet):
         log.debug(actor+': got a read from server')
         log.debug(actor+': sending data to MISTER %r (%d b) ' % (data, len(data)))
 
-        # asyncio.ensure_future(loop.run_in_executor(None, 
-        #     uag_session.put_file, gen_pck_uri(uagnet.token, actor, index), data))
-
         future_async(uagnet.send_packet, actor, index, data)
 
         log.info(actor+': putting index %d as %d b' % (index, len(data)))
@@ -438,10 +422,7 @@ async def actor_pipe_uag_to_socket(actor, uagnet):
     while True:
 
         # ------ assyming blocking behaviour
-        
-        # task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
-        #     ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor+"/"+("pck-%s.bin" % str(index).zfill(8)) ))
-        
+       
         del tasks[:]
         task = future_async(uagnet.commence_packet, actor, index)
         tasks.append( (index, task) )
@@ -471,8 +452,6 @@ async def actor_pipe_uag_to_socket(actor, uagnet):
                 future_async(uagnet.ack_packet, actor, index)
 
                 index += 1
-
-                #asyncio.ensure_future(loop.run_in_executor(None, uag_session.delete_file, url))
             else:
                 log.debug(other+": when polling uag, data was None")
 
