@@ -2,23 +2,26 @@
 
 # ToDo: init methods
 # ToDo: clean up methods
-# ToDo: clean connection close
 # ToDo: multiple connections?
-# ToDo: ditch all blocking op
-# ToDo: ignore redirect
 
 import asyncio
-
-from collections import OrderedDict
-from collections import namedtuple
-
-from requests_toolbelt import MultipartEncoder
 
 try:
     import signal
 except ImportError:
     signal = None
+
+from collections import OrderedDict
+from collections import namedtuple
+
+import re
+import sys
+import os.path
+import datetime
+import random
+
 import logging
+import argparse
 
 import urllib.request
 import ssl
@@ -31,19 +34,15 @@ from http.cookiejar import DefaultCookiePolicy
 
 from bs4 import BeautifulSoup
 
-import re
-import sys
-import argparse
-from pprint import pprint
-import os.path
-
-import datetime
-import random
+from requests_toolbelt import MultipartEncoder
 
 log = logging.getLogger(__name__)
-uag_session = None
+
+ALARM_GARBAGE_SIZE = 1024*1024*4
+BIG_GARBAGE_SIZE = 1024*1024*2
 
 BUFFER_SIZE = 1024*768
+SMALL_BUFFER_SIZE = 1024*64
 NEXT_TICK = 0.01
 
 
@@ -398,7 +397,7 @@ async def actor_pipe_socket_to_uag(actor, conn):
 
     while not conn.reader.at_eof():
 
-        while sum(kept_data.values()) > 4 * 1024*1024:
+        while sum(kept_data.values()) > ALARM_GARBAGE_SIZE:
 
             files = await future_async(conn.uagnet.unrecieved_packets, actor)
 
@@ -410,7 +409,7 @@ async def actor_pipe_socket_to_uag(actor, conn):
 
             kept_data = new_sent
 
-            if sum(kept_data.values()) > 2 * 1024*1024:
+            if sum(kept_data.values()) > BIG_GARBAGE_SIZE:
                 await asyncio.sleep(3.2)
 
         log.debug(actor+': waiting for a read from server')
@@ -478,7 +477,7 @@ async def actor_pipe_uag_to_socket(actor, conn):
                     conn.writer.write(data[1:])
 
                     while True:
-                        doc = await future_async(r.read, 16*1024)
+                        doc = await future_async(r.read, SMALL_BUFFER_SIZE)
                         conn.writer.write(doc)
                         if not doc:
                             break
@@ -494,11 +493,11 @@ async def actor_pipe_uag_to_socket(actor, conn):
     log.warn(other+': writer closed')
 
 
-async def mister_contact_client(client_reader, client_writer):
+async def mister_contact_client(uag, client_reader, client_writer):
 
     log.info("New Connection")
 
-    conn = connectionHandle(uagNetworkHandle(uag_session))
+    conn = connectionHandle(uagNetworkHandle(uag))
     conn.writer = client_writer
     conn.reader = client_reader
     conn.uagnet.token = uagNetworkHandle.gen_token()
@@ -527,14 +526,14 @@ async def mister_contact_client(client_reader, client_writer):
     await actor_pipe_socket_to_uag("mister", conn)
 
 
-async def valet_contact_server():
+async def valet_contact_server(uag):
 
     # server is capable of only one connection at a time.
     while True:
 
         delayed_open = None
 
-        conn = connectionHandle(uagNetworkHandle(uag_session))
+        conn = connectionHandle(uagNetworkHandle(uag))
 
         while True:
             data = await future_async(conn.uagnet.lookup_syns)
@@ -690,8 +689,8 @@ if __name__ == '__main__':
         urllib.request.HTTPCookieProcessor(cj),
         NoRedirect())
 
-    uag_session = UAGSession(opener)
-    uag_session.perform_auth()
+    uag = UAGSession(opener)
+    uag.perform_auth()
     ALLOW_REDIRECT = False
 
     loop = asyncio.get_event_loop()
@@ -700,11 +699,12 @@ if __name__ == '__main__':
         loop.add_signal_handler(signal.SIGINT, loop.stop)
 
     if args.server:
-        f = asyncio.ensure_future(valet_contact_server())
+        f = asyncio.ensure_future(valet_contact_server(uag))
         log.info("Waiting for connection request")
     else:
         f = asyncio.start_server(
-            lambda r, w: asyncio.ensure_future(mister_contact_client(r, w)),
+            lambda r, w: asyncio.ensure_future(
+                mister_contact_client(uag, r, w)),
             host=args.client.host, port=args.client.port)
         log.info("Server is listening on port 8000")
 
