@@ -39,7 +39,7 @@ from requests_toolbelt import MultipartEncoder
 
 log = logging.getLogger(__name__)
 
-sys.setcheckinterval(0)
+# sys.setcheckinterval(0)
 
 ALARM_GARBAGE_SIZE = 1024*1024*4
 BIG_GARBAGE_SIZE = 1024*1024*2
