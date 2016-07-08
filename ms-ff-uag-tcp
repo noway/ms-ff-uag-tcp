@@ -102,7 +102,8 @@ class Address:
 
     __repr__ = __str__
 
-        
+PckTask = namedtuple('PckTask', 'idx, task')
+
 class UAGSession:
     """Class for working with UAG"""
 
@@ -329,9 +330,6 @@ class UAGSession:
 
         
 def mister_accept_client(client_reader, client_writer):
-    if args.server:
-        log.error("Something gone terribly wrong")
-    log.info("New Connection")
     task = asyncio.ensure_future(mister_communicate_client(client_reader, client_writer))
 
 
@@ -346,7 +344,7 @@ async def scavenge_for_new_tasks(actor, conn, tasks):
 
         listing = await future_async(conn.uagnet.unrecieved_packets, actor) or []
 
-        tasks_id = tasks[len(tasks) - 1][0] + 1
+        tasks_id = tasks[len(tasks) - 1].idx + 1
 
         # We are relying here on UAG alphanumerical sorting
 
@@ -363,7 +361,7 @@ async def scavenge_for_new_tasks(actor, conn, tasks):
                 break
 
             task = future_async(conn.uagnet.commence_packet, actor, tasks_id)
-            tasks.append( (tasks_id, task) )
+            tasks.append(PckTask(tasks_id, task))
 
             tasks_id += 1
             informal_pip += 1
@@ -431,7 +429,7 @@ async def actor_pipe_uag_to_socket(actor, conn):
         # ------ assyming blocking behaviour
         del tasks[:]
         task = future_async(conn.uagnet.commence_packet, actor, index)
-        tasks.append( (index, task) )
+        tasks.append(PckTask(index, task))
         # ------ assyming blocking behaviour
 
         if first_time:
@@ -439,8 +437,8 @@ async def actor_pipe_uag_to_socket(actor, conn):
             first_time = False
 
         log.debug(other+": starting ordered parallelism")
-        for task in tasks:
-            data, r, url = await task[1]
+        for task in tasks: # no race cond here?
+            data, r, url = await task.task
 
             if data is not None:
                 log.debug(other+': got data from VALET "%r" (%d b)' % (data, len(data)))
@@ -476,6 +474,8 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
 
 async def mister_communicate_client(client_reader, client_writer):
+
+    log.info("New Connection")
 
     conn = connectionHandle(uagNetworkHandle(uag_session))
     conn.writer = client_writer
@@ -664,7 +664,9 @@ if __name__ == '__main__':
         f = asyncio.ensure_future(valet_communicate_server())
         log.info("Waiting for connection request")
     else:
-        f = asyncio.start_server(mister_accept_client, host=args.client.host, port=args.client.port)
+        f = asyncio.start_server(
+            lambda r, w: asyncio.ensure_future(mister_communicate_client(r, w)), 
+            host=args.client.host, port=args.client.port)
         log.info("Server is listening on port 8000")
 
     loop.run_until_complete(f)
