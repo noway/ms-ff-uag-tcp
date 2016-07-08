@@ -10,6 +10,8 @@
 import asyncio
 
 from collections import OrderedDict
+from collections import namedtuple
+
 from requests_toolbelt import MultipartEncoder
 
 try:
@@ -103,6 +105,8 @@ class Address:
     __repr__ = __str__
 
 PckTask = namedtuple('PckTask', 'idx, task')
+
+ListDir = namedtuple('ListDir', 'is_file, name')
 
 class UAGSession:
     """Class for working with UAG"""
@@ -264,7 +268,7 @@ class UAGSession:
         else:
             html_doc = r.read().decode('utf-8', 'ignore');
 
-        return_arr = []
+        results = []
         try:
             soup = BeautifulSoup(html_doc, 'html.parser')
             file_nodes = soup.find(id="fileListTable").find("tbody").find_all("label")
@@ -274,10 +278,10 @@ class UAGSession:
                 else:
                     isFile = False
 
-                return_arr.append((isFile, i.find('nobr').text))
+                results.append(ListDir(isFile, i.find('nobr').text))
         except Exception:
-            return_arr = None # Non-existant directory
-        return return_arr
+            results = None # Non-existant directory
+        return results
 
     def delete_file(self, file):
         
@@ -328,10 +332,6 @@ class UAGSession:
         return (doc, r, file)
 
 
-        
-def mister_accept_client(client_reader, client_writer):
-    task = asyncio.ensure_future(mister_communicate_client(client_reader, client_writer))
-
 
 def future_async(*args):
     return asyncio.ensure_future(loop.run_in_executor(None, *args))
@@ -350,7 +350,7 @@ async def scavenge_for_new_tasks(actor, conn, tasks):
 
         informal_pip = 0
         for i in listing:
-            seq_id = int(i[1].replace('pck-','').replace('.bin',''))
+            seq_id = uagNetworkHandle.pck_uri_to_idx(i.name)
 
             if seq_id < tasks_id:
                 continue
@@ -371,7 +371,7 @@ async def scavenge_for_new_tasks(actor, conn, tasks):
 
 async def actor_pipe_socket_to_uag(actor, conn):
 
-    index = 1
+    idx = 1
     sent_data = {}
     kept_data = {}
 
@@ -384,7 +384,7 @@ async def actor_pipe_socket_to_uag(actor, conn):
             new_sent = {}
 
             for i in files:
-                key = uagNetworkHandle.pck_uri_to_idx(i[1])
+                key = uagNetworkHandle.pck_uri_to_idx(i.name)
                 new_sent[key] = sent_data[key]
 
             kept_data = new_sent
@@ -405,14 +405,14 @@ async def actor_pipe_socket_to_uag(actor, conn):
         log.debug(actor+': got a read from server')
         log.debug(actor+': sending data to MISTER %r (%d b) ' % (data, len(data)))
 
-        future_async(conn.uagnet.send_packet, actor, index, data)
+        future_async(conn.uagnet.send_packet, actor, idx, data)
 
-        log.info(actor+': putting index %d as %d b' % (index, len(data)))
+        log.info(actor+': putting idx %d as %d b' % (idx, len(data)))
 
-        kept_data[index] = len(data)
-        sent_data[index] = len(data)
+        kept_data[idx] = len(data)
+        sent_data[idx] = len(data)
 
-        index += 1
+        idx += 1
 
     log.warn(actor+': reader closed')
 
@@ -421,15 +421,15 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
     other = "mister" if actor == "valet" else "valet"
 
-    index = 1
+    idx = 1
     first_time = True
     tasks = []
     while True:
 
         # ------ assyming blocking behaviour
         del tasks[:]
-        task = future_async(conn.uagnet.commence_packet, actor, index)
-        tasks.append(PckTask(index, task))
+        task = future_async(conn.uagnet.commence_packet, actor, idx)
+        tasks.append(PckTask(idx, task))
         # ------ assyming blocking behaviour
 
         if first_time:
@@ -458,13 +458,13 @@ async def actor_pipe_uag_to_socket(actor, conn):
                             break
                         conn.writer.write(doc)
                 
-                future_async(conn.uagnet.ack_packet, actor, index)
+                future_async(conn.uagnet.ack_packet, actor, idx)
 
-                index += 1
+                idx += 1
             else:
                 log.debug(other+": when polling uag, data was None")
 
-        await asyncio.sleep(NEXT_TICK) 
+        # await asyncio.sleep(NEXT_TICK) 
 
     log.warn(other+': writer closed')
 
@@ -481,26 +481,26 @@ async def mister_communicate_client(client_reader, client_writer):
     conn.writer = client_writer
     conn.reader = client_reader
     conn.uagnet.token = uagNetworkHandle.gen_token()
-    conn.uagnet.do_syn()
+    await future_async(conn.uagnet.do_syn)
 
     task = asyncio.ensure_future(actor_pipe_uag_to_socket('valet', conn))
 
     while True:
-        data = conn.uagnet.lookup_synack()
+        data = await future_async(conn.uagnet.lookup_synack)
 
         if data is None:
             log.info("data is None")
             await asyncio.sleep(NEXT_TICK)
             continue
         
-        if (False, "line-mister") in data:
+        if ListDir(False, "line-mister") in data:
             pprint(data)
             log.info("connection established!!")
             break
         else:
             log.info("waiting to synack from server")
 
-        await asyncio.sleep(NEXT_TICK)
+        # await asyncio.sleep(NEXT_TICK)
     
     await actor_pipe_socket_to_uag("mister", conn)
 
@@ -515,18 +515,18 @@ async def valet_communicate_server():
         conn = connectionHandle(uagNetworkHandle(uag_session))
 
         while True:
-            data = conn.uagnet.lookup_syns()
+            data = await future_async(conn.uagnet.lookup_syns)
 
             if len(data):
-                conn.uagnet.token = uagNetworkHandle.conn_uri_to_token(data[0][1])
+                conn.uagnet.token = uagNetworkHandle.conn_uri_to_token(data[0].name)
 
                 delayed_open = asyncio.ensure_future(asyncio.open_connection(
                     args.server.host, args.server.port))               
 
-                conn.uagnet.do_synack()
+                await future_async(conn.uagnet.do_synack)
                 break
 
-            await asyncio.sleep(NEXT_TICK)
+            # await asyncio.sleep(NEXT_TICK)
 
         log.info("VALET: new connection from MISTER %s" % conn.uagnet.token)
         
@@ -605,9 +605,6 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
             return urllib.request.HTTPRedirectHandler.redirect_request(self, req, fp, code, msg, hdrs, newurl)
         else:
             return None
-
-from collections import namedtuple
-
 
 if __name__ == '__main__':
 
