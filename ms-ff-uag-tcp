@@ -532,6 +532,8 @@ async def valet_handle_server():
         log.info("VALET: new connection from MISTER %s" % conn_token)
         
         reader, writer = await conn_task
+        conn_object.writer = writer
+        conn_object.reader = reader
         log.info("VALET: established server conn for %s" % conn_token)
 
         asyncio.ensure_future(actor_pipe_uag_to_socket('mister', conn_object))
@@ -548,20 +550,19 @@ class connHandle:
         self.uag_session = uag_session
 
     def do_syn(self):
-        uag_session.put_file(".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con", b'')
-        pass
+        self.uag_session.put_file(".ms-ff-uag-tcp-data/to-connect/"+self.conn_token+".con", b'')
 
     def lookup_syns(self):
         return self.uag_session.list_folder(".ms-ff-uag-tcp-data/to-connect/")
 
     def do_synack(self):
-        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est") # not like in spec
-        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister") # not like in spec
-        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet") # not like in spec
-        self.uag_session.delete_file(".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con")
+        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+self.conn_token+"-est") # not like in spec
+        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+self.conn_token+"-est/line-mister") # not like in spec
+        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+self.conn_token+"-est/line-valet") # not like in spec
+        self.uag_session.delete_file(".ms-ff-uag-tcp-data/to-connect/"+self.conn_token+".con")
 
     def lookup_synack(self):
-        return uag_session.list_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/")
+        return self.uag_session.list_folder(".ms-ff-uag-tcp-data/"+self.conn_token+"-est/")
 
 
 
