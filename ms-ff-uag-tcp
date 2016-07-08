@@ -425,7 +425,9 @@ async def actor_pipe_uag_to_socket(actor, conn):
     idx = 1
     first_time = True
     tasks = []
-    while conn.is_connected_or_connecting:
+    wrote_eof = False
+
+    while conn.is_connected_or_connecting and not wrote_eof:
 
         # ------ assyming blocking behaviour
         del tasks[:]
@@ -447,7 +449,7 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
                 if data[0] == b'!'[0]:
                     conn.writer.write_eof()
-                    # TODO: should be break(2), 
+                    wrote_eof = True
                     break
 
                 else:
@@ -455,9 +457,9 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
                     while True:
                         doc = await future_async(r.read, 16*1024)
+                        conn.writer.write(doc)
                         if not doc:
                             break
-                        conn.writer.write(doc)
                 
                 future_async(conn.uagnet.ack_packet, actor, idx)
 
@@ -493,7 +495,7 @@ async def mister_communicate_client(client_reader, client_writer):
 
         if data is None:
             log.info("data is None")
-            #await asyncio.sleep(NEXT_TICK)
+            # await asyncio.sleep(NEXT_TICK)
             continue
         
         if ListDir(False, "line-mister") in data:
