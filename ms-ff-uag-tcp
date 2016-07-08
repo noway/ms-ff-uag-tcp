@@ -322,10 +322,6 @@ async def dump_reader_to_writer(reader, writer):
         doc = await loop.run_in_executor(None, reader.read, 16*1024)
         writer.write(doc)
 
-async def make_gc(opener, url):
-    await loop.run_in_executor(None, uag_session.delete_file, url)
-
-
 def mister_accept_client(client_reader, client_writer):
     if args.server:
         log.error("Something gone terribly wrong")
@@ -335,17 +331,25 @@ def mister_accept_client(client_reader, client_writer):
 
 
 
+def future_async(*args):
+    return asyncio.ensure_future(loop.run_in_executor(None, *args))
+
 
 
 async def scavenger_for_new_tasks(actor, uagnet, tasks):
     other = "mister" if actor == "valet" else "valet"
 
     while True:
-        listing = await loop.run_in_executor(
-            None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor) or []
+
+        listing = await future_async(uagnet.unrecieved_packets, actor) or []
+
+        # listing = await loop.run_in_executor(
+        #     None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor) or []
 
         tasks_id = tasks[len(tasks) - 1][0] + 1
+
         # We are relying here on UAG alphanumerical sorting
+
         informal_pip = 0
         for i in listing:
             seq_id = int(i[1].replace('pck-','').replace('.bin',''))
@@ -358,11 +362,11 @@ async def scavenger_for_new_tasks(actor, uagnet, tasks):
                 log.error(other+": MISSING SEQ ORDER PACKET. ok...")
                 break
 
-            
 
-            task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
-                ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor+"/"+i[1]))
+            # asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
+            #    ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor+"/"+i[1]))
 
+            task = future_async(uagnet.commence_packet, actor, tasks_id)
             tasks.append( (tasks_id, task) )
 
             tasks_id += 1
@@ -381,8 +385,9 @@ async def actor_pipe_socket_to_uag(actor, uagnet):
 
         while sum(kept_data.values()) > 4 * 1024*1024:
 
-            files = await loop.run_in_executor(None, 
-                uag_session.list_folder, ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor)
+            # files = await loop.run_in_executor(None, 
+            #     uag_session.list_folder, ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor)
+            files = await future_async(uagnet.unrecieved_packets, actor)
 
             new_sent = {}
 
@@ -408,9 +413,11 @@ async def actor_pipe_socket_to_uag(actor, uagnet):
         log.debug(actor+': got a read from server')
         log.debug(actor+': sending data to MISTER %r (%d b) ' % (data, len(data)))
 
-        asyncio.ensure_future(loop.run_in_executor(None, 
-            uag_session.put_file, gen_pck_uri(uagnet.token, actor, index), data))
-        
+        # asyncio.ensure_future(loop.run_in_executor(None, 
+        #     uag_session.put_file, gen_pck_uri(uagnet.token, actor, index), data))
+
+        future_async(uagnet.send_packet, actor, index, data)
+
         log.info(actor+': putting index %d as %d b' % (index, len(data)))
 
         kept_data[index] = len(data)
@@ -431,9 +438,12 @@ async def actor_pipe_uag_to_socket(actor, uagnet):
     while True:
 
         # ------ assyming blocking behaviour
+        
+        # task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
+        #     ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor+"/"+("pck-%s.bin" % str(index).zfill(8)) ))
+        
         del tasks[:]
-        task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
-            ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor+"/"+("pck-%s.bin" % str(index).zfill(8)) ))
+        task = future_async(uagnet.commence_packet, actor, index)
         tasks.append( (index, task) )
         # ------ assyming blocking behaviour
 
@@ -457,9 +467,12 @@ async def actor_pipe_uag_to_socket(actor, uagnet):
                 else:
                     uagnet.writer.write(data[1:])
                     await dump_reader_to_writer(r, uagnet.writer)
+                
+                future_async(uagnet.ack_packet, actor, index)
+
                 index += 1
-        
-                asyncio.ensure_future(loop.run_in_executor(None, uag_session.delete_file, url))
+
+                #asyncio.ensure_future(loop.run_in_executor(None, uag_session.delete_file, url))
             else:
                 log.debug(other+": when polling uag, data was None")
 
@@ -505,7 +518,6 @@ async def mister_handle_client(client_reader, client_writer):
 
 
 async def valet_handle_server():
-
     # server is capable of only one connection at a time.
 
     while True:
@@ -563,7 +575,17 @@ class uagNetworkHandle:
     def lookup_synack(self):
         return self.uag_session.list_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/")
 
+    def commence_packet(self, line, index):
+        return self.uag_session.get_content(".ms-ff-uag-tcp-data/"+self.token+"-est/line-"+line+"/"+("pck-%s.bin" % str(index).zfill(8)) )
 
+    def send_packet(self, line, index, packet):
+        self.uag_session.put_file(gen_pck_uri(self.token, line, index), packet)
+
+    def unrecieved_packets(self, line):
+        return self.uag_session.list_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/line-"+line)
+
+    def ack_packet(self, line, index):
+        self.uag_session.delete_file(gen_pck_uri(self.token, line, index))
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
