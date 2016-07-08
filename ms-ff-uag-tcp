@@ -310,8 +310,8 @@ class UAGSession:
 
 
         
-def gen_pck_uri(conn_token, line, index):
-    return ".ms-ff-uag-tcp-data/%s-est/line-%s/pck-%s.bin" % (conn_token, line, str(index).zfill(8))
+def gen_pck_uri(token, line, index):
+    return ".ms-ff-uag-tcp-data/%s-est/line-%s/pck-%s.bin" % (token, line, str(index).zfill(8))
 
 
 async def dump_reader_to_writer(reader, writer):
@@ -337,12 +337,12 @@ def mister_accept_client(client_reader, client_writer):
 
 
 
-async def scavenger_for_new_tasks(conn_token, actor, tasks):
+async def scavenger_for_new_tasks(token, actor, tasks):
     other = "mister" if actor == "valet" else "valet"
 
     while True:
         listing = await loop.run_in_executor(
-            None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor) or []
+            None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+token+"-est/line-"+actor) or []
 
         tasks_id = tasks[len(tasks) - 1][0] + 1
         # We are relying here on UAG alphanumerical sorting
@@ -361,7 +361,7 @@ async def scavenger_for_new_tasks(conn_token, actor, tasks):
             
 
             task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
-                ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor+"/"+i[1]))
+                ".ms-ff-uag-tcp-data/"+token+"-est/line-"+actor+"/"+i[1]))
 
             tasks.append( (tasks_id, task) )
 
@@ -382,7 +382,7 @@ async def actor_pipe_socket_to_uag(actor, uagnet):
         while sum(kept_data.values()) > 4 * 1024*1024:
 
             files = await loop.run_in_executor(None, 
-                uag_session.list_folder, ".ms-ff-uag-tcp-data/"+uagnet.conn_token+"-est/line-"+actor)
+                uag_session.list_folder, ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor)
 
             new_sent = {}
 
@@ -409,7 +409,7 @@ async def actor_pipe_socket_to_uag(actor, uagnet):
         log.debug(actor+': sending data to MISTER %r (%d b) ' % (data, len(data)))
 
         asyncio.ensure_future(loop.run_in_executor(None, 
-            uag_session.put_file, gen_pck_uri(uagnet.conn_token, actor, index), data))
+            uag_session.put_file, gen_pck_uri(uagnet.token, actor, index), data))
         
         log.info(actor+': putting index %d as %d b' % (index, len(data)))
 
@@ -433,12 +433,12 @@ async def actor_pipe_uag_to_socket(actor, uagnet):
         # ------ assyming blocking behaviour
         del tasks[:]
         task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
-            ".ms-ff-uag-tcp-data/"+uagnet.conn_token+"-est/line-"+actor+"/"+("pck-%s.bin" % str(index).zfill(8)) ))
+            ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor+"/"+("pck-%s.bin" % str(index).zfill(8)) ))
         tasks.append( (index, task) )
         # ------ assyming blocking behaviour
 
         if first_time:
-            asyncio.ensure_future( scavenger_for_new_tasks(uagnet.conn_token, actor, tasks) )
+            asyncio.ensure_future( scavenger_for_new_tasks(uagnet.token, actor, tasks) )
             first_time = False
 
         log.debug(other+": starting ordered parallelism")
@@ -478,7 +478,7 @@ async def mister_handle_client(client_reader, client_writer):
 
     uagnet.writer = client_writer
     uagnet.reader = client_reader
-    uagnet.conn_token = datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + ('%08X' % random.randrange(16**8))
+    uagnet.token = datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + ('%08X' % random.randrange(16**8))
 
     uagnet.do_syn()
 
@@ -510,7 +510,6 @@ async def valet_handle_server():
 
     while True:
 
-        conn_token = ""
         conn_task = None
         uagnet = uagNetworkHandle(uag_session)
 
@@ -518,7 +517,7 @@ async def valet_handle_server():
             data = uagnet.lookup_syns()
 
             if len(data):
-                uagnet.conn_token = data[0][1].replace('.con', '')
+                uagnet.token = data[0][1].replace('.con', '')
                 
                 conn_task = asyncio.ensure_future(asyncio.open_connection(
                     args.server.split(':')[0], int(args.server.split(':')[1])))               
@@ -529,19 +528,19 @@ async def valet_handle_server():
 
             await asyncio.sleep(NEXT_TICK)
 
-        log.info("VALET: new connection from MISTER %s" % uagnet.conn_token)
+        log.info("VALET: new connection from MISTER %s" % uagnet.token)
         
         reader, writer = await conn_task
         uagnet.writer = writer
         uagnet.reader = reader
-        log.info("VALET: established server conn for %s" % uagnet.conn_token)
+        log.info("VALET: established server conn for %s" % uagnet.token)
 
         asyncio.ensure_future(actor_pipe_uag_to_socket('mister', uagnet))
         await actor_pipe_socket_to_uag("valet", uagnet)
 
 class uagNetworkHandle:
 
-    conn_token = ''
+    token = ''
     uag_session = None
     reader = None
     writer = None
@@ -550,19 +549,19 @@ class uagNetworkHandle:
         self.uag_session = uag_session
 
     def do_syn(self):
-        self.uag_session.put_file(".ms-ff-uag-tcp-data/to-connect/"+self.conn_token+".con", b'')
+        self.uag_session.put_file(".ms-ff-uag-tcp-data/to-connect/"+self.token+".con", b'')
 
     def lookup_syns(self):
         return self.uag_session.list_folder(".ms-ff-uag-tcp-data/to-connect/")
 
     def do_synack(self):
-        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+self.conn_token+"-est") # not like in spec
-        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+self.conn_token+"-est/line-mister") # not like in spec
-        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+self.conn_token+"-est/line-valet") # not like in spec
-        self.uag_session.delete_file(".ms-ff-uag-tcp-data/to-connect/"+self.conn_token+".con")
+        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+self.token+"-est") # not like in spec
+        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/line-mister") # not like in spec
+        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/line-valet") # not like in spec
+        self.uag_session.delete_file(".ms-ff-uag-tcp-data/to-connect/"+self.token+".con")
 
     def lookup_synack(self):
-        return self.uag_session.list_folder(".ms-ff-uag-tcp-data/"+self.conn_token+"-est/")
+        return self.uag_session.list_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/")
 
 
 
