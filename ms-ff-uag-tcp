@@ -340,7 +340,7 @@ def future_async(*args):
 async def scavenge_for_new_tasks(actor, conn, tasks):
     other = "mister" if actor == "valet" else "valet"
 
-    while True:
+    while conn.is_connected_or_connecting:
 
         listing = await future_async(conn.uagnet.unrecieved_packets, actor) or []
 
@@ -415,6 +415,7 @@ async def actor_pipe_socket_to_uag(actor, conn):
         idx += 1
 
     log.warn(actor+': reader closed')
+    conn.is_connected_or_connecting = False
 
 
 async def actor_pipe_uag_to_socket(actor, conn):
@@ -424,7 +425,7 @@ async def actor_pipe_uag_to_socket(actor, conn):
     idx = 1
     first_time = True
     tasks = []
-    while True:
+    while conn.is_connected_or_connecting:
 
         # ------ assyming blocking behaviour
         del tasks[:]
@@ -483,6 +484,8 @@ async def mister_communicate_client(client_reader, client_writer):
     conn.uagnet.token = uagNetworkHandle.gen_token()
     await future_async(conn.uagnet.do_syn)
 
+    conn.is_connected_or_connecting = True
+
     task = asyncio.ensure_future(actor_pipe_uag_to_socket('valet', conn))
 
     while True:
@@ -490,7 +493,7 @@ async def mister_communicate_client(client_reader, client_writer):
 
         if data is None:
             log.info("data is None")
-            await asyncio.sleep(NEXT_TICK)
+            #await asyncio.sleep(NEXT_TICK)
             continue
         
         if ListDir(False, "line-mister") in data:
@@ -520,6 +523,8 @@ async def valet_communicate_server():
             if len(data):
                 conn.uagnet.token = uagNetworkHandle.conn_uri_to_token(data[0].name)
 
+                conn.is_connected_or_connecting = True
+                
                 delayed_open = asyncio.ensure_future(asyncio.open_connection(
                     args.server.host, args.server.port))               
 
@@ -542,6 +547,8 @@ class connectionHandle:
     
     reader = None
     writer = None
+
+    is_connected_or_connecting = False
 
     def __init__(self, uagnet):
         self.uagnet = uagnet
