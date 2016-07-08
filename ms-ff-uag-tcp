@@ -337,12 +337,12 @@ def mister_accept_client(client_reader, client_writer):
 
 
 
-async def scavenger_for_new_tasks(token, actor, tasks):
+async def scavenger_for_new_tasks(actor, uagnet, tasks):
     other = "mister" if actor == "valet" else "valet"
 
     while True:
         listing = await loop.run_in_executor(
-            None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+token+"-est/line-"+actor) or []
+            None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor) or []
 
         tasks_id = tasks[len(tasks) - 1][0] + 1
         # We are relying here on UAG alphanumerical sorting
@@ -361,7 +361,7 @@ async def scavenger_for_new_tasks(token, actor, tasks):
             
 
             task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
-                ".ms-ff-uag-tcp-data/"+token+"-est/line-"+actor+"/"+i[1]))
+                ".ms-ff-uag-tcp-data/"+uagnet.token+"-est/line-"+actor+"/"+i[1]))
 
             tasks.append( (tasks_id, task) )
 
@@ -438,7 +438,7 @@ async def actor_pipe_uag_to_socket(actor, uagnet):
         # ------ assyming blocking behaviour
 
         if first_time:
-            asyncio.ensure_future( scavenger_for_new_tasks(uagnet.token, actor, tasks) )
+            asyncio.ensure_future( scavenger_for_new_tasks(actor, uagnet, tasks) )
             first_time = False
 
         log.debug(other+": starting ordered parallelism")
