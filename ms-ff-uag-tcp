@@ -427,12 +427,13 @@ class UAGSession:
 
         try:
             r = self.opener.open(url)
+            doc = r.read(100)
+            doc_text = doc.decode('cp437', 'ignore')
+            is_404 = doc_text.find("content='0;URL=errorPage.asp?error=404")
         except urllib.error.HTTPError:
             doc = ''
-
-        doc = r.read(100)
-        doc_text = doc.decode('cp437', 'ignore')
-        is_404 = doc_text.find("content='0;URL=errorPage.asp?error=404")
+            doc_text = ''
+            is_404 = 1
 
         if doc == '' or is_404 != -1:
             return (None, None, file)
