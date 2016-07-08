@@ -532,39 +532,39 @@ async def valet_handle_server():
 class uagNetworkHandle:
 
     token = ''
-    uag_session = None
+    uag = None
     reader = None
     writer = None
 
-    def __init__(self, uag_session):
-        self.uag_session = uag_session
+    def __init__(self, uag):
+        self.uag = uag
 
     def do_syn(self):
-        self.uag_session.put_file(".ms-ff-uag-tcp-data/to-connect/"+self.token+".con", b'')
+        self.uag.put_file(".ms-ff-uag-tcp-data/to-connect/"+self.token+".con", b'')
 
     def lookup_syns(self):
-        return self.uag_session.list_folder(".ms-ff-uag-tcp-data/to-connect/")
+        return self.uag.list_folder(".ms-ff-uag-tcp-data/to-connect/")
 
     def do_synack(self):
-        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+self.token+"-est") # not like in spec
-        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/line-mister") # not like in spec
-        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/line-valet") # not like in spec
-        self.uag_session.delete_file(".ms-ff-uag-tcp-data/to-connect/"+self.token+".con")
+        self.uag.create_folder(".ms-ff-uag-tcp-data/"+self.token+"-est") # not like in spec
+        self.uag.create_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/line-mister") # not like in spec
+        self.uag.create_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/line-valet") # not like in spec
+        self.uag.delete_file(".ms-ff-uag-tcp-data/to-connect/"+self.token+".con")
 
     def lookup_synack(self):
-        return self.uag_session.list_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/")
+        return self.uag.list_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/")
 
     def commence_packet(self, line, index):
-        return self.uag_session.get_content(".ms-ff-uag-tcp-data/"+self.token+"-est/line-"+line+"/"+("pck-%s.bin" % str(index).zfill(8)) )
+        return self.uag.get_content(".ms-ff-uag-tcp-data/"+self.token+"-est/line-"+line+"/"+("pck-%s.bin" % str(index).zfill(8)) )
 
     def send_packet(self, line, index, packet):
-        self.uag_session.put_file(gen_pck_uri(self.token, line, index), packet)
+        self.uag.put_file(gen_pck_uri(self.token, line, index), packet)
 
     def unrecieved_packets(self, line):
-        return self.uag_session.list_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/line-"+line)
+        return self.uag.list_folder(".ms-ff-uag-tcp-data/"+self.token+"-est/line-"+line)
 
     def ack_packet(self, line, index):
-        self.uag_session.delete_file(gen_pck_uri(self.token, line, index))
+        self.uag.delete_file(gen_pck_uri(self.token, line, index))
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
