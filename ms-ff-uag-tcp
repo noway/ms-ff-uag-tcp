@@ -504,33 +504,6 @@ async def mister_handle_client(client_reader, client_writer):
     await actor_pipe_socket_to_uag("mister", conn_object)
 
 
-class connHandle:
-
-    conn_token = ''
-    uag_session = None
-    reader = None
-    writer = None
-
-    def __init__(self, uag_session):
-        self.uag_session = uag_session
-
-    def do_syn(self):
-        uag_session.put_file(".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con", b'')
-        pass
-
-    def lookup_syns(self):
-        return self.uag_session.list_folder(".ms-ff-uag-tcp-data/to-connect/")
-
-    def do_synack(self):
-        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est") # not like in spec
-        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister") # not like in spec
-        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet") # not like in spec
-        self.uag_session.delete_file(".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con")
-
-    def lookup_synack(self):
-        return uag_session.list_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/")
-
-
 async def valet_handle_server():
 
     # server is capable of only one connection at a time.
@@ -563,6 +536,34 @@ async def valet_handle_server():
 
         asyncio.ensure_future(actor_pipe_uag_to_socket('mister', conn_object))
         await actor_pipe_socket_to_uag("valet", conn_object)
+
+class connHandle:
+
+    conn_token = ''
+    uag_session = None
+    reader = None
+    writer = None
+
+    def __init__(self, uag_session):
+        self.uag_session = uag_session
+
+    def do_syn(self):
+        uag_session.put_file(".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con", b'')
+        pass
+
+    def lookup_syns(self):
+        return self.uag_session.list_folder(".ms-ff-uag-tcp-data/to-connect/")
+
+    def do_synack(self):
+        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est") # not like in spec
+        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/line-mister") # not like in spec
+        self.uag_session.create_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/line-valet") # not like in spec
+        self.uag_session.delete_file(".ms-ff-uag-tcp-data/to-connect/"+conn_token+".con")
+
+    def lookup_synack(self):
+        return uag_session.list_folder(".ms-ff-uag-tcp-data/"+conn_token+"-est/")
+
+
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
