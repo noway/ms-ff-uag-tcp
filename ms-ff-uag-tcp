@@ -332,12 +332,12 @@ def future_async(*args):
 
 
 
-async def scavenger_for_new_tasks(actor, uagnet, tasks):
+async def scavenger_for_new_tasks(actor, conn, tasks):
     other = "mister" if actor == "valet" else "valet"
 
     while True:
 
-        listing = await future_async(uagnet.unrecieved_packets, actor) or []
+        listing = await future_async(conn.uagnet.unrecieved_packets, actor) or []
 
         tasks_id = tasks[len(tasks) - 1][0] + 1
 
@@ -355,7 +355,7 @@ async def scavenger_for_new_tasks(actor, uagnet, tasks):
                 log.error(other+": MISSING SEQ ORDER PACKET. ok...")
                 break
 
-            task = future_async(uagnet.commence_packet, actor, tasks_id)
+            task = future_async(conn.uagnet.commence_packet, actor, tasks_id)
             tasks.append( (tasks_id, task) )
 
             tasks_id += 1
@@ -364,17 +364,17 @@ async def scavenger_for_new_tasks(actor, uagnet, tasks):
         if informal_pip:
             log.info(other+": Scavenger found " +str(informal_pip)+ " pcks")
 
-async def actor_pipe_socket_to_uag(actor, uagnet):
+async def actor_pipe_socket_to_uag(actor, conn):
 
     index = 1
     sent_data = {}
     kept_data = {}
 
-    while not uagnet.reader.at_eof():
+    while not conn.reader.at_eof():
 
         while sum(kept_data.values()) > 4 * 1024*1024:
 
-            files = await future_async(uagnet.unrecieved_packets, actor)
+            files = await future_async(conn.uagnet.unrecieved_packets, actor)
 
             new_sent = {}
 
@@ -390,9 +390,9 @@ async def actor_pipe_socket_to_uag(actor, uagnet):
 
         log.debug(actor+': waiting for a read from server')
 
-        data = await uagnet.reader.read(BUFFER_SIZE)
+        data = await conn.reader.read(BUFFER_SIZE)
 
-        if uagnet.reader.at_eof():
+        if conn.reader.at_eof():
             data = b'!' + data
         else:
             data = b' ' + data
@@ -400,7 +400,7 @@ async def actor_pipe_socket_to_uag(actor, uagnet):
         log.debug(actor+': got a read from server')
         log.debug(actor+': sending data to MISTER %r (%d b) ' % (data, len(data)))
 
-        future_async(uagnet.send_packet, actor, index, data)
+        future_async(conn.uagnet.send_packet, actor, index, data)
 
         log.info(actor+': putting index %d as %d b' % (index, len(data)))
 
@@ -412,7 +412,7 @@ async def actor_pipe_socket_to_uag(actor, uagnet):
     log.warn(actor+': reader closed')
 
 
-async def actor_pipe_uag_to_socket(actor, uagnet):
+async def actor_pipe_uag_to_socket(actor, conn):
 
     other = "mister" if actor == "valet" else "valet"
 
@@ -424,12 +424,12 @@ async def actor_pipe_uag_to_socket(actor, uagnet):
         # ------ assyming blocking behaviour
        
         del tasks[:]
-        task = future_async(uagnet.commence_packet, actor, index)
+        task = future_async(conn.uagnet.commence_packet, actor, index)
         tasks.append( (index, task) )
         # ------ assyming blocking behaviour
 
         if first_time:
-            asyncio.ensure_future( scavenger_for_new_tasks(actor, uagnet, tasks) )
+            asyncio.ensure_future( scavenger_for_new_tasks(actor, conn, tasks) )
             first_time = False
 
         log.debug(other+": starting ordered parallelism")
@@ -441,15 +441,15 @@ async def actor_pipe_uag_to_socket(actor, uagnet):
                 log.debug(other+': relaying VALETS data')
 
                 if data[0] == b'!'[0]:
-                    uagnet.writer.write_eof()
+                    conn.writer.write_eof()
                     # TODO: should be break(2), 
                     break
 
                 else:
-                    uagnet.writer.write(data[1:])
-                    await dump_reader_to_writer(r, uagnet.writer)
+                    conn.writer.write(data[1:])
+                    await dump_reader_to_writer(r, conn.writer)
                 
-                future_async(uagnet.ack_packet, actor, index)
+                future_async(conn.uagnet.ack_packet, actor, index)
 
                 index += 1
             else:
@@ -466,18 +466,17 @@ async def actor_pipe_uag_to_socket(actor, uagnet):
 
 async def mister_handle_client(client_reader, client_writer):
 
-    uagnet = uagNetworkHandle(uag_session)
+    conn = connectionHandle(uagNetworkHandle(uag_session))
+    conn.writer = client_writer
+    conn.reader = client_reader
+    conn.uagnet.token = datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + ('%08X' % random.randrange(16**8))
 
-    uagnet.writer = client_writer
-    uagnet.reader = client_reader
-    uagnet.token = datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + ('%08X' % random.randrange(16**8))
+    conn.uagnet.do_syn()
 
-    uagnet.do_syn()
-
-    task = asyncio.ensure_future(actor_pipe_uag_to_socket('valet', uagnet))
+    task = asyncio.ensure_future(actor_pipe_uag_to_socket('valet', conn))
 
     while True:
-        data = uagnet.lookup_synack()
+        data = conn.uagnet.lookup_synack()
 
         if data is None:
             log.info("data is None")
@@ -493,7 +492,7 @@ async def mister_handle_client(client_reader, client_writer):
 
         await asyncio.sleep(NEXT_TICK)
     
-    await actor_pipe_socket_to_uag("mister", uagnet)
+    await actor_pipe_socket_to_uag("mister", conn)
 
 
 async def valet_handle_server():
@@ -501,40 +500,47 @@ async def valet_handle_server():
 
     while True:
 
-        conn_task = None
-        uagnet = uagNetworkHandle(uag_session)
+        delayed_open = None
+
+        conn = connectionHandle(uagNetworkHandle(uag_session))
 
         while True:
-            data = uagnet.lookup_syns()
+            data = conn.uagnet.lookup_syns()
 
             if len(data):
-                uagnet.token = data[0][1].replace('.con', '')
+                conn.uagnet.token = data[0][1].replace('.con', '')
                 
-                conn_task = asyncio.ensure_future(asyncio.open_connection(
+                delayed_open = asyncio.ensure_future(asyncio.open_connection(
                     args.server.split(':')[0], int(args.server.split(':')[1])))               
 
-                uagnet.do_synack()
+                conn.uagnet.do_synack()
 
                 break
 
             await asyncio.sleep(NEXT_TICK)
 
-        log.info("VALET: new connection from MISTER %s" % uagnet.token)
+        log.info("VALET: new connection from MISTER %s" % conn.uagnet.token)
         
-        reader, writer = await conn_task
-        uagnet.writer = writer
-        uagnet.reader = reader
-        log.info("VALET: established server conn for %s" % uagnet.token)
+        conn.reader, conn.writer = await delayed_open
 
-        asyncio.ensure_future(actor_pipe_uag_to_socket('mister', uagnet))
-        await actor_pipe_socket_to_uag("valet", uagnet)
+        log.info("VALET: established server conn for %s" % conn.uagnet.token)
+
+        asyncio.ensure_future(actor_pipe_uag_to_socket('mister', conn))
+        await actor_pipe_socket_to_uag("valet", conn)
+
+class connectionHandle:
+    uagnet = None
+    
+    reader = None
+    writer = None
+
+    def __init__(self, uagnet):
+        self.uagnet = uagnet
 
 class uagNetworkHandle:
 
     token = ''
     uag = None
-    reader = None
-    writer = None
 
     def __init__(self, uag):
         self.uag = uag
