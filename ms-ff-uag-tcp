@@ -28,6 +28,7 @@ import re
 import sys
 import argparse
 from pprint import pprint
+import os.path
 
 import datetime
 import random
@@ -336,6 +337,40 @@ def mister_accept_client(client_reader, client_writer):
 
 
 
+async def scavenger_for_new_tasks(conn_token, actor, tasks):
+    other = "mister" if actor == "valet" else "valet"
+
+    while True:
+        listing = await loop.run_in_executor(
+            None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor) or []
+
+        tasks_id = tasks[len(tasks) - 1][0] + 1
+        # We are relying here on UAG alphanumerical sorting
+        informal_pip = 0
+        for i in listing:
+            seq_id = int(i[1].replace('pck-','').replace('.bin',''))
+
+            if seq_id < tasks_id:
+                continue
+
+            if seq_id > tasks_id:
+                log.error(str(seq_id) +" vs "+str(tasks_id))
+                log.error(other+": MISSING SEQ ORDER PACKET. ok...")
+                break
+
+            
+
+            task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
+                ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor+"/"+i[1]))
+
+            tasks.append( (tasks_id, task) )
+
+            tasks_id += 1
+            informal_pip += 1
+
+        if informal_pip:
+            log.info(other+": Scavenger found " +str(informal_pip)+ " pcks")
+
 async def actor_pipe_socket_to_uag(actor, conn_token, socket_reader):
 
     index = 1
@@ -385,41 +420,6 @@ async def actor_pipe_socket_to_uag(actor, conn_token, socket_reader):
 
     log.warn(actor+': reader closed')
 
-import os.path
-
-async def scavenger_for_new_tasks(conn_token, actor, tasks):
-    other = "mister" if actor == "valet" else "valet"
-
-    while True:
-        listing = await loop.run_in_executor(
-            None, uag_session.list_folder, ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor) or []
-
-        tasks_id = tasks[len(tasks) - 1][0] + 1
-        # We are relying here on UAG alphanumerical sorting
-        informal_pip = 0
-        for i in listing:
-            seq_id = int(i[1].replace('pck-','').replace('.bin',''))
-
-            if seq_id < tasks_id:
-                continue
-
-            if seq_id > tasks_id:
-                log.error(str(seq_id) +" vs "+str(tasks_id))
-                log.error(other+": MISSING SEQ ORDER PACKET. ok...")
-                break
-
-            
-
-            task = asyncio.ensure_future(loop.run_in_executor(None, uag_session.get_content, 
-                ".ms-ff-uag-tcp-data/"+conn_token+"-est/line-"+actor+"/"+i[1]))
-
-            tasks.append( (tasks_id, task) )
-
-            tasks_id += 1
-            informal_pip += 1
-
-        if informal_pip:
-            log.info(other+": Scavenger found " +str(informal_pip)+ " pcks")
 
 async def actor_pipe_uag_to_socket(actor, conn_token, socket_writer):
 
