@@ -93,9 +93,11 @@ ARGS.add_argument(
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, hdrs, newurl):
         if ALLOW_REDIRECT:
+            print("ALLOWED")
             return urllib.request.HTTPRedirectHandler.redirect_request(
                 self, req, fp, code, msg, hdrs, newurl)
         else:
+            print("NOT ALLOWED")
             return None
 
 
@@ -442,8 +444,14 @@ class UAGSession:
         return (doc, r, file)
 
 
-def future_async(*args):
-    return asyncio.ensure_future(loop.run_in_executor(None, *args))
+def future_async(*args, timeout=0):
+    if not timeout:
+        print("NO TIME"+str(args[0]))
+        return asyncio.ensure_future(loop.run_in_executor(None, *args))
+    else:
+        print("TIMEOUT SET"+str(args[0]))
+        return asyncio.ensure_future(
+            asyncio.wait_for(loop.run_in_executor(None, *args), timeout))
 
 
 async def scavenge_for_new_tasks(actor, conn, tasks):
@@ -452,7 +460,7 @@ async def scavenge_for_new_tasks(actor, conn, tasks):
     while conn.is_connected_or_connecting:
 
         listing = await future_async(
-            conn.uagnet.unrecieved_packets, actor) or []
+            conn.uagnet.unrecieved_packets, actor, timeout=1.5) or []
 
         tasks_id = tasks[len(tasks) - 1].idx + 1
 
@@ -470,8 +478,9 @@ async def scavenge_for_new_tasks(actor, conn, tasks):
                 log.error(other+": MISSING SEQ ORDER PACKET. ok...")
                 break
 
-            task = future_async(conn.uagnet.commence_packet, actor, tasks_id)
-            tasks.append(PckTask(tasks_id, task))
+            #task = future_async(conn.uagnet.commence_packet, actor, tasks_id)
+            tasks.append(PckTask(tasks_id, future_async(
+                conn.uagnet.commence_packet, actor, tasks_id, timeout=1.5)))
 
             tasks_id += 1
             informal_pip += 1
@@ -536,7 +545,6 @@ async def actor_pipe_socket_to_uag(actor, conn):
 
 async def actor_pipe_uag_to_socket(actor, conn):
 
-
     idx = 1
     tasks = []
 
@@ -545,12 +553,11 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
     other = "mister" if actor == "valet" else "valet"
 
-
     while conn.is_connected_or_connecting and not wrote_eof:
 
         # ------ assyming blocking behaviour ------ #
         tasks[:] = [PckTask(idx, future_async(
-            conn.uagnet.commence_packet, actor, idx))]
+            conn.uagnet.commence_packet, actor, idx, timeout=1.5))]
         # ------ assyming blocking behaviour ------ #
 
         if first_time:
@@ -586,6 +593,7 @@ async def actor_pipe_uag_to_socket(actor, conn):
                 future_async(conn.uagnet.ack_packet, actor, idx)
 
                 idx += 1
+                await asyncio.sleep(1)
             else:
                 log.debug(other+": when polling uag, data was None")
                 await asyncio.sleep(NEXT_TICK)
@@ -663,7 +671,18 @@ async def valet_contact_server(uag):
         asyncio.ensure_future(actor_pipe_uag_to_socket('mister', conn))
         await actor_pipe_socket_to_uag("valet", conn)
 
+# async def kek():
+#     tasks = []
+#     for i in range(0, 5):
+#         tasks.append(asyncio.wait_for(loop.run_in_executor(None, uag.list_folder, '.ms-ff-uag-tcp-data'), 0.99))
+    
+#     for i in tasks:
+#         try:
+#             print(len(await i))
+#         except:
+#             print("err")
 
+    
 if __name__ == '__main__':
 
     log = logging.getLogger("")
@@ -727,8 +746,11 @@ if __name__ == '__main__':
             host=args.client.host, port=args.client.port)
         log.info("Server is listening on port 8000")
 
+    #f = asyncio.ensure_future(kek())
+
     loop.run_until_complete(f)
     loop.run_forever()
+    
 
     # Unit tests would be of use
     # create_folder(opener, main_url, 'testing-folders')
