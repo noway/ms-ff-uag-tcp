@@ -536,20 +536,22 @@ async def actor_pipe_socket_to_uag(actor, conn):
 
 async def actor_pipe_uag_to_socket(actor, conn):
 
-    other = "mister" if actor == "valet" else "valet"
 
     idx = 1
-    first_time = True
     tasks = []
+
+    first_time = True
     wrote_eof = False
+
+    other = "mister" if actor == "valet" else "valet"
+
 
     while conn.is_connected_or_connecting and not wrote_eof:
 
-        # ------ assyming blocking behaviour
-        del tasks[:]
-        task = future_async(conn.uagnet.commence_packet, actor, idx)
-        tasks.append(PckTask(idx, task))
-        # ------ assyming blocking behaviour
+        # ------ assyming blocking behaviour ------ #
+        tasks[:] = [PckTask(idx, future_async(
+            conn.uagnet.commence_packet, actor, idx))]
+        # ------ assyming blocking behaviour ------ #
 
         if first_time:
             asyncio.ensure_future(scavenge_for_new_tasks(actor, conn, tasks))
@@ -587,8 +589,8 @@ async def actor_pipe_uag_to_socket(actor, conn):
             else:
                 log.debug(other+": when polling uag, data was None")
                 await asyncio.sleep(NEXT_TICK)
-
-        # await asyncio.sleep(NEXT_TICK)
+        else:
+            await asyncio.sleep(NEXT_TICK)
 
     log.warn(other+': writer closed')
 
