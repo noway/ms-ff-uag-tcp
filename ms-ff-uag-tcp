@@ -4,6 +4,8 @@
 # ToDo: clean up methods
 # ToDo: multiple connections?
 # from scavenger read the whole packet content
+# install opener
+
 import asyncio
 
 try:
@@ -14,8 +16,11 @@ except ImportError:
 from collections import OrderedDict
 from collections import namedtuple
 
+import concurrent.futures
+
 import re
 import sys
+import time
 import os.path
 import datetime
 import random
@@ -93,11 +98,11 @@ ARGS.add_argument(
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, hdrs, newurl):
         if ALLOW_REDIRECT:
-            #print("ALLOWED")
+            # print("ALLOWED")
             return urllib.request.HTTPRedirectHandler.redirect_request(
                 self, req, fp, code, msg, hdrs, newurl)
         else:
-            #print("NOT ALLOWED")
+            # print("NOT ALLOWED")
             return None
 
 
@@ -113,17 +118,18 @@ class Address:
 
     def __new__(cls, addr):
         try:
-            addr = addr.split(":")
-            host = addr[0]
-            port = int(addr[1])
+            Address._parse_init_arg(addr)
             return super(Address, cls).__new__(cls)
         except (AttributeError, KeyError) as e:
             return None
 
     def __init__(self, addr):
+        self.host, self.port = Address._parse_init_arg(addr)
+
+    @staticmethod
+    def _parse_init_arg(addr):
         addr = addr.split(":")
-        self.host = addr[0]
-        self.port = int(addr[1])
+        return addr[0], int(addr[1])
 
     def __str__(self):
         return 'Address(host="%s", port=%d)' % (self.host, self.port)
@@ -452,7 +458,6 @@ def future_async(*args, timeout=0):
         log.debug("TIMEOUT SET"+str(args[0]))
         return asyncio.ensure_future(
             asyncio.wait_for(loop.run_in_executor(None, *args), timeout))
-import concurrent.futures
 
 async def scavenge_for_new_tasks(actor, conn, tasks):
     other = "mister" if actor == "valet" else "valet"
@@ -483,7 +488,7 @@ async def scavenge_for_new_tasks(actor, conn, tasks):
                 log.error(other+": MISSING SEQ ORDER PACKET. ok...")
                 break
 
-            #task = future_async(conn.uagnet.commence_packet, actor, tasks_id)
+            # task = future_async(conn.uagnet.commence_packet, actor, tasks_id)
             tasks.append(PckTask(tasks_id, future_async(
                 conn.uagnet.commence_packet, actor, tasks_id, timeout=1.5)))
 
@@ -564,7 +569,7 @@ async def actor_pipe_uag_to_socket(actor, conn):
         if good_packet:
             await asyncio.sleep(1)
             pass
-            
+
         # ------ assyming blocking behaviour ------ #
         tasks[:] = [PckTask(idx, future_async(
             conn.uagnet.commence_packet, actor, idx, timeout=1.5))]
@@ -582,8 +587,6 @@ async def actor_pipe_uag_to_socket(actor, conn):
             except concurrent.futures._base.TimeoutError:
                 log.info("recovered timeout")
                 data, r, url = (None, None, None)
-
-
 
             if data is not None:
                 log.debug(other+': got data from VALET "%r" (%d b)' % (
@@ -692,25 +695,25 @@ async def valet_contact_server(uag):
 # async def kek():
 #     tasks = []
 #     for i in range(0, 5):
-#         tasks.append(asyncio.wait_for(loop.run_in_executor(None, uag.list_folder, '.ms-ff-uag-tcp-data'), 0.99))
-    
+#         tasks.append(asyncio.wait_for(loop.run_in_executor(
+#             None, uag.list_folder, '.ms-ff-uag-tcp-data'), 0.99))
 #     for i in tasks:
 #         try:
 #             print(len(await i))
 #         except:
 #             print("err")
-import time
+
 async def watch_doge():
     while True:
-        last_time = time.time() 
+        last_time = time.time()
         await asyncio.sleep(0.03)
         waited = time.time() - last_time
         if waited > 0.04:
             log.error("HICCUP!!! %f secs!!!" % waited)
         else:
-            #log.info('ok')
+            # log.info('ok')
             pass
-    
+
 if __name__ == '__main__':
 
     log = logging.getLogger("")
@@ -774,11 +777,10 @@ if __name__ == '__main__':
             host=args.client.host, port=args.client.port)
         log.info("Server is listening on port 8000")
 
-    #f = asyncio.ensure_future(kek())
+    # f = asyncio.ensure_future(kek())
     asyncio.ensure_future(watch_doge())
     loop.run_until_complete(f)
     loop.run_forever()
-    
 
     # Unit tests would be of use
     # create_folder(opener, main_url, 'testing-folders')
