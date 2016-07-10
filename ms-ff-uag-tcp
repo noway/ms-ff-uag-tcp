@@ -3,7 +3,7 @@
 # ToDo: init methods
 # ToDo: clean up methods
 # ToDo: multiple connections?
-
+# from scavenger read the whole packet content
 import asyncio
 
 try:
@@ -93,11 +93,11 @@ ARGS.add_argument(
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, hdrs, newurl):
         if ALLOW_REDIRECT:
-            print("ALLOWED")
+            #print("ALLOWED")
             return urllib.request.HTTPRedirectHandler.redirect_request(
                 self, req, fp, code, msg, hdrs, newurl)
         else:
-            print("NOT ALLOWED")
+            #print("NOT ALLOWED")
             return None
 
 
@@ -446,21 +446,26 @@ class UAGSession:
 
 def future_async(*args, timeout=0):
     if not timeout:
-        print("NO TIME"+str(args[0]))
+        log.debug("NO TIME"+str(args[0]))
         return asyncio.ensure_future(loop.run_in_executor(None, *args))
     else:
-        print("TIMEOUT SET"+str(args[0]))
+        log.debug("TIMEOUT SET"+str(args[0]))
         return asyncio.ensure_future(
             asyncio.wait_for(loop.run_in_executor(None, *args), timeout))
-
+import concurrent.futures
 
 async def scavenge_for_new_tasks(actor, conn, tasks):
     other = "mister" if actor == "valet" else "valet"
 
     while conn.is_connected_or_connecting:
 
-        listing = await future_async(
-            conn.uagnet.unrecieved_packets, actor, timeout=1.5) or []
+        try:
+            listing = await future_async(
+                conn.uagnet.unrecieved_packets, actor, timeout=1.5) or []
+        except concurrent.futures._base.TimeoutError:
+            log.info("recovered timeout scavenger")
+
+            listing = []
 
         tasks_id = tasks[len(tasks) - 1].idx + 1
 
@@ -550,11 +555,16 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
     first_time = True
     wrote_eof = False
+    good_packet = False
 
     other = "mister" if actor == "valet" else "valet"
 
     while conn.is_connected_or_connecting and not wrote_eof:
 
+        if good_packet:
+            await asyncio.sleep(1)
+            pass
+            
         # ------ assyming blocking behaviour ------ #
         tasks[:] = [PckTask(idx, future_async(
             conn.uagnet.commence_packet, actor, idx, timeout=1.5))]
@@ -566,7 +576,14 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
         log.debug(other+": starting ordered parallelism")
         for task in tasks:  # no race cond here?
-            data, r, url = await task.task
+
+            try:
+                data, r, url = await task.task
+            except concurrent.futures._base.TimeoutError:
+                log.info("recovered timeout")
+                data, r, url = (None, None, None)
+
+
 
             if data is not None:
                 log.debug(other+': got data from VALET "%r" (%d b)' % (
@@ -593,7 +610,7 @@ async def actor_pipe_uag_to_socket(actor, conn):
                 future_async(conn.uagnet.ack_packet, actor, idx)
 
                 idx += 1
-                await asyncio.sleep(1)
+                good_packet = True
             else:
                 log.debug(other+": when polling uag, data was None")
                 await asyncio.sleep(NEXT_TICK)
@@ -621,17 +638,18 @@ async def mister_contact_client(uag, client_reader, client_writer):
         data = await future_async(conn.uagnet.lookup_synack)
 
         if data is None:
-            log.info("data is None")
+            log.debug("waiting for synack: hasn't got it yet")
             # await asyncio.sleep(NEXT_TICK)
             continue
 
-        if ListDir(False, "line-mister") in data:
-            log.info("Connection established!")
-            break
-        else:
-            log.info("Waiting to synack from server")
+        if ListDir(False, "line-mister") not in data:
+            log.debug("still waiting to synack from server")
+            # await asyncio.sleep(NEXT_TICK)
+            continue
 
+        log.info("Connection established!")
         # await asyncio.sleep(NEXT_TICK)
+        break
 
     await actor_pipe_socket_to_uag("mister", conn)
 
@@ -681,7 +699,17 @@ async def valet_contact_server(uag):
 #             print(len(await i))
 #         except:
 #             print("err")
-
+import time
+async def watch_doge():
+    while True:
+        last_time = time.time() 
+        await asyncio.sleep(0.03)
+        waited = time.time() - last_time
+        if waited > 0.04:
+            log.error("HICCUP!!! %f secs!!!" % waited)
+        else:
+            #log.info('ok')
+            pass
     
 if __name__ == '__main__':
 
@@ -747,7 +775,7 @@ if __name__ == '__main__':
         log.info("Server is listening on port 8000")
 
     #f = asyncio.ensure_future(kek())
-
+    asyncio.ensure_future(watch_doge())
     loop.run_until_complete(f)
     loop.run_forever()
     
