@@ -109,7 +109,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
             return None
 
 
-PckTask = namedtuple('PckTask', 'idx, task')
+PckTask = namedtuple('PckTask', 'idx, task, is_scavenged')
 
 
 ListDir = namedtuple('ListDir', 'is_file, name')
@@ -206,7 +206,7 @@ class uagNetworkHandle:
                 uagNetworkHandle.pck_uri(self.token, line, idx))
         else:
             return self.uag.get_content(
-                uagNetworkHandle.pck_uri(self.token, line, idx, handle_youself=True))
+                uagNetworkHandle.pck_uri(self.token, line, idx), handle_youself=True)
 
 
 
@@ -447,7 +447,7 @@ class UAGSession:
             r = self.opener.open(url)
             if handle_youself:
                 doc = r.read()
-                log.info("Just read the whole packet")
+                #log.info("Just read the whole packet" + file)
             else:
                 doc = r.read(100)
             doc_text = doc.decode('cp437', 'ignore')
@@ -462,6 +462,8 @@ class UAGSession:
 
         return (doc, r, file)
 
+import threading
+lock = threading.Lock()
 
 def future_async(*args, timeout=0):
     if not timeout:
@@ -487,9 +489,11 @@ async def scavenge_for_new_tasks(actor, conn, tasks):
 
         tasks_id = tasks[len(tasks) - 1].idx + 1
 
+        log.info("scgr tasks_id: %d " % tasks_id)
         # We are relying here on UAG alphanumerical sorting
 
         informal_pip = 0
+        lock.acquire()
         for i in listing:
             seq_id = uagNetworkHandle.pck_uri_to_idx(i.name)
 
@@ -503,7 +507,7 @@ async def scavenge_for_new_tasks(actor, conn, tasks):
 
             # task = future_async(conn.uagnet.commence_packet, actor, tasks_id)
             tasks.append(PckTask(tasks_id, future_async(
-                conn.uagnet.commence_packet, actor, tasks_id, True, timeout=1.5)))
+                conn.uagnet.commence_packet, actor, tasks_id, True, timeout=1.5), True))
 
             tasks_id += 1
             informal_pip += 1
@@ -511,6 +515,7 @@ async def scavenge_for_new_tasks(actor, conn, tasks):
             if informal_pip > 5:
                 # rate limit
                 break
+        lock.release()
 
         if informal_pip:
             log.info(other + ": Scavenger found %d pcks" % informal_pip)
@@ -583,10 +588,13 @@ async def actor_pipe_uag_to_socket(actor, conn):
             await asyncio.sleep(1)
             pass
 
+        lock.acquire()
         # ------ assyming blocking behaviour ------ #
-        tasks[:] = [PckTask(idx, future_async(
-            conn.uagnet.commence_packet, actor, idx, timeout=1.5))]
+        del tasks[:]
+        tasks.append(PckTask(idx, future_async(
+            conn.uagnet.commence_packet, actor, idx, timeout=1.5), False))
         # ------ assyming blocking behaviour ------ #
+        lock.release()
 
         if first_time:
             asyncio.ensure_future(scavenge_for_new_tasks(actor, conn, tasks))
@@ -594,7 +602,7 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
         log.debug(other+": starting ordered parallelism")
         for task in tasks:  # no race cond here?
-
+            log.info("tasks.len: %d"%len(tasks))
             try:
                 data, r, url = await task.task
             except concurrent.futures._base.TimeoutError:
@@ -621,8 +629,10 @@ async def actor_pipe_uag_to_socket(actor, conn):
                             if not doc:
                                 break
                             dlen += len(doc)
+                    elif dlen > 100:
+                        log.info("Just read the whole packet" + str(idx))
 
-                    log.info(other+": feeded %d as %d b" % (idx, dlen))
+                    log.info(other+": feeded %d as %d b, is_svgd: %r" % (idx, dlen, task.is_scavenged))
 
                 future_async(conn.uagnet.ack_packet, actor, idx)
 
