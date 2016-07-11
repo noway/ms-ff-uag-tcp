@@ -13,3 +13,7 @@ pyenv shell 3.5.2
 
 pip install -r requirements.txt
 ```
+
+# Init
+For a first start invocation with `--init` is required
+
