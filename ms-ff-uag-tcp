@@ -844,6 +844,7 @@ if __name__ == '__main__':
         init_method(uag)
     elif args.clean:
         clean_method(uag, '.ms-ff-uag-tcp-data')
+        init_method(uag)
     # elif args.unit:
         # create_folder(opener, main_url, 'testing-folders')
         # pprint(list_folder(opener, main_url, ''))
