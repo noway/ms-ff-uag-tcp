@@ -3,13 +3,10 @@
 # ToDo: init methods
 # ToDo: clean up methods
 # ToDo: multiple connections?
-# install opener
 
 # main problem about urllib2: no async, no connection pool
 # research connectionppol at httplib and urllib3
 # httplib2 ?
-
-# use dict for scavenger
 
 import asyncio
 
@@ -93,6 +90,12 @@ ARGS.add_argument(
 ARGS.add_argument(
     '--client', action="store", dest='client',
     type=str, help='Client mode: listen to address for connections')
+
+ARGS.add_argument(
+    '--init', action="store_true", help='init the directory')
+
+ARGS.add_argument(
+    '--clean', action="store_true", help='clean the directory')
 
 
 ARGS.add_argument(
@@ -762,6 +765,34 @@ async def watch_doge():
             # log.info('ok')
             pass
 
+def init_method(uag):
+
+    ls = uag.list_folder('.ms-ff-uag-tcp-data/')
+    
+    print(ls)
+    
+    if ls is None or ListDir(False, 'to-connect') not in ls:
+        log.info("Initialising...")
+        uag.create_folder(".ms-ff-uag-tcp-data/to-connect")
+        uag.create_folder(".ms-ff-uag-tcp-data/")
+        log.info("Initialized.")
+    else:
+        log.info("Already initialized")
+
+def clean_method(uag, dirr):
+    ls = uag.list_folder(dirr) or []
+
+    for i in ls:
+        print("clearing %s"%i.name)
+        filedir = dirr+"/"+i.name
+        print(filedir)
+        if not i.is_file and i.name is not 'to-connect':
+            clean_method(uag, filedir)
+            uag.delete_file(filedir)
+        elif i.is_file:
+            uag.delete_file(filedir)
+
+
 if __name__ == '__main__':
 
     log = logging.getLogger("")
@@ -808,31 +839,37 @@ if __name__ == '__main__':
 
     uag = UAGSession(opener)
     uag.perform_auth()
-    ALLOW_REDIRECT = False
 
-    loop = asyncio.get_event_loop()
-
-    if signal is not None and sys.platform != 'win32':
-        loop.add_signal_handler(signal.SIGINT, loop.stop)
-
-    if args.server:
-        f = asyncio.ensure_future(valet_contact_server(uag))
-        log.info("Waiting for connection request")
+    if args.init:
+        init_method(uag)
+    elif args.clean:
+        clean_method(uag, '.ms-ff-uag-tcp-data')
+    # elif args.unit:
+        # create_folder(opener, main_url, 'testing-folders')
+        # pprint(list_folder(opener, main_url, ''))
+        # pprint(get_content(opener, main_url, 'ms-ff-uag-tcp.md'))
+        # put_file(opener, main_url, '00000000.bin', b'test')
+        # delete_file(opener, main_url, 'testing-132-folders')
     else:
-        f = asyncio.start_server(
-            lambda r, w: asyncio.ensure_future(
-                mister_contact_client(uag, r, w)),
-            host=args.client.host, port=args.client.port)
-        log.info("Server is listening on port 8000")
+        ALLOW_REDIRECT = False
+        loop = asyncio.get_event_loop()
 
-    # f = asyncio.ensure_future(kek())
-    asyncio.ensure_future(watch_doge())
-    loop.run_until_complete(f)
-    loop.run_forever()
+        if signal is not None and sys.platform != 'win32':
+            loop.add_signal_handler(signal.SIGINT, loop.stop)
+
+        if args.server:
+            f = asyncio.ensure_future(valet_contact_server(uag))
+            log.info("Waiting for connection request")
+        else:
+            f = asyncio.start_server(
+                lambda r, w: asyncio.ensure_future(
+                    mister_contact_client(uag, r, w)),
+                host=args.client.host, port=args.client.port)
+            log.info("Server is listening on port 8000")
+
+        # f = asyncio.ensure_future(kek())
+        asyncio.ensure_future(watch_doge())
+        loop.run_until_complete(f)
+        loop.run_forever()
 
     # Unit tests would be of use
-    # create_folder(opener, main_url, 'testing-folders')
-    # pprint(list_folder(opener, main_url, ''))
-    # pprint(get_content(opener, main_url, 'ms-ff-uag-tcp.md'))
-    # put_file(opener, main_url, '00000000.bin', b'test')
-    # delete_file(opener, main_url, 'testing-132-folders')
