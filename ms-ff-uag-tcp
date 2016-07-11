@@ -6,6 +6,9 @@
 # from scavenger read the whole packet content
 # install opener
 
+# main problem about urllib2: no async, no connection pool
+# research connectionppol at httplib and urllib3
+# httplib2 ?
 import asyncio
 
 try:
