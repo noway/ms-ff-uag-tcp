@@ -443,27 +443,39 @@ class UAGSession:
         url.add_header("User-Agent", USER_AGENT)
         url.add_header("Accept", ACCEPT)
 
+        xvgd = False
+
         try:
             r = self.opener.open(url)
+
             if handle_youself:
+                xvgd = True
                 doc = r.read()
-                #log.info("Just read the whole packet" + file)
             else:
+                xvgd = False
                 doc = r.read(100)
+
             doc_text = doc.decode('cp437', 'ignore')
             is_404 = doc_text.find("content='0;URL=errorPage.asp?error=404")
+
         except urllib.error.HTTPError:
             doc = ''
             doc_text = ''
             is_404 = 1
 
         if doc == '' or is_404 != -1:
-            return (None, None, file)
+            return (None, None, file, xvgd)
 
-        return (doc, r, file)
+        return (doc, r, file, xvgd)
 
 import threading
 lock = threading.Lock()
+
+
+class ScavengerContext:
+    tasks = None
+    tasks_id = 1
+
 
 def future_async(*args, timeout=0):
     if not timeout:
@@ -474,7 +486,7 @@ def future_async(*args, timeout=0):
         return asyncio.ensure_future(
             asyncio.wait_for(loop.run_in_executor(None, *args), timeout))
 
-async def scavenge_for_new_tasks(actor, conn, tasks):
+async def scavenge_for_new_tasks(actor, conn, xvgd_c):
     other = "mister" if actor == "valet" else "valet"
 
     while conn.is_connected_or_connecting:
@@ -487,27 +499,27 @@ async def scavenge_for_new_tasks(actor, conn, tasks):
 
             listing = []
 
-        tasks_id = tasks[len(tasks) - 1].idx + 1
-
-        log.info("scgr tasks_id: %d " % tasks_id)
-        # We are relying here on UAG alphanumerical sorting
-
-        informal_pip = 0
         lock.acquire()
+
+        tasks_id = xvgd_c.tasks_id + 1
+        informal_pip = 0
+        #log.info("scgr tasks_id + 1: %d " % tasks_id)
+        # We are relying here on UAG alphanumerical sorting
         for i in listing:
             seq_id = uagNetworkHandle.pck_uri_to_idx(i.name)
+
 
             if seq_id < tasks_id:
                 continue
 
             if seq_id > tasks_id:
-                log.error("%d vs %d" % (seq_id, tasks_id))
-                log.error(other+": MISSING SEQ ORDER PACKET. ok...")
+                log.debug(other+": MISSING SEQ ORDER PACKET. ok...")
+                log.debug("%d vs %d" % (seq_id, tasks_id))
                 break
 
-            # task = future_async(conn.uagnet.commence_packet, actor, tasks_id)
-            tasks.append(PckTask(tasks_id, future_async(
+            xvgd_c.tasks.append(PckTask(tasks_id, future_async(
                 conn.uagnet.commence_packet, actor, tasks_id, True, timeout=1.5), True))
+            xvgd_c.tasks_id = tasks_id
 
             tasks_id += 1
             informal_pip += 1
@@ -515,12 +527,14 @@ async def scavenge_for_new_tasks(actor, conn, tasks):
             if informal_pip > 5:
                 # rate limit
                 break
+
         lock.release()
 
         if informal_pip:
-            log.info(other + ": Scavenger found %d pcks" % informal_pip)
+            log.debug(other + ": Scavenger found %d pcks" % informal_pip)
 
-        await asyncio.sleep(0.67)
+        #await asyncio.sleep(0.67)
+        await asyncio.sleep(NEXT_TICK)
 
 async def actor_pipe_socket_to_uag(actor, conn):
 
@@ -543,7 +557,7 @@ async def actor_pipe_socket_to_uag(actor, conn):
             kept_data = new_sent
 
             if sum(kept_data.values()) > BIG_GARBAGE_SIZE:
-                await asyncio.sleep(3.2)
+                await asyncio.sleep(0.067)
 
         log.debug(actor+': waiting for a read from server')
 
@@ -560,7 +574,7 @@ async def actor_pipe_socket_to_uag(actor, conn):
 
         future_async(conn.uagnet.send_packet, actor, idx, data)
 
-        log.info(actor+': putting idx %d as %d b' % (idx, len(data)))
+        log.info(actor+':put %d(%d b)' % (idx, len(data)))
 
         kept_data[idx] = len(data)
         sent_data[idx] = len(data)
@@ -569,18 +583,20 @@ async def actor_pipe_socket_to_uag(actor, conn):
 
     log.warn(actor+': reader closed')
     conn.is_connected_or_connecting = False
-
+from collections import deque
 
 async def actor_pipe_uag_to_socket(actor, conn):
 
     idx = 1
-    tasks = []
 
     first_time = True
     wrote_eof = False
     good_packet = False
 
     other = "mister" if actor == "valet" else "valet"
+
+    xvgd_c = ScavengerContext()
+    xvgd_c.tasks = deque()#[]
 
     while conn.is_connected_or_connecting and not wrote_eof:
 
@@ -589,50 +605,56 @@ async def actor_pipe_uag_to_socket(actor, conn):
             pass
 
         lock.acquire()
-        # ------ assyming blocking behaviour ------ #
-        del tasks[:]
-        tasks.append(PckTask(idx, future_async(
-            conn.uagnet.commence_packet, actor, idx, timeout=1.5), False))
-        # ------ assyming blocking behaviour ------ #
+        if not len(xvgd_c.tasks):
+            xvgd_c.tasks.append(PckTask(idx, future_async(
+                conn.uagnet.commence_packet, actor, idx, timeout=1.5), False))
+            xvgd_c.tasks_id = idx
         lock.release()
 
         if first_time:
-            asyncio.ensure_future(scavenge_for_new_tasks(actor, conn, tasks))
+            asyncio.ensure_future(scavenge_for_new_tasks(actor, conn, xvgd_c))
             first_time = False
 
         log.debug(other+": starting ordered parallelism")
-        for task in tasks:  # no race cond here?
-            log.info("tasks.len: %d"%len(tasks))
+
+        while len(xvgd_c.tasks):
+            task = xvgd_c.tasks.popleft()
+            log.debug("tasks.len: %d"%len(xvgd_c.tasks))
             try:
-                data, r, url = await task.task
+                data, r, url, xvgd = await task.task
             except concurrent.futures._base.TimeoutError:
                 log.info("recovered timeout")
-                data, r, url = (None, None, None)
+                data, r, url, xvgd = (None, None, None, None)
+
+            if task.idx != idx:
+                log.error("The scavenger is severely broken")
+                log.error("Got %d packet, expected %d, top is %d" % (task.idx, idx, xvgd_c.tasks_id))
+                sys.exit()
 
             if data is not None:
                 log.debug(other+': got data from VALET "%r" (%d b)' % (
                     data, len(data)))
                 log.debug(other+': relaying VALETS data')
 
+                conn.writer.write(data[1:])
+
+                dlen = len(data)
+
+                if not xvgd:
+                    while True:
+                        doc = await future_async(r.read, SMALL_BUFFER_SIZE)
+                        conn.writer.write(doc)
+                        dlen += len(doc)
+                        if not doc:
+                            break
+                log.info(other+":feed %d(%d b),%s,xvgd:%d" % (idx, dlen,url, task.is_scavenged))
+
                 if data[0] == b'!'[0]:
+                    await conn.writer.drain()
                     conn.writer.write_eof()
                     wrote_eof = True
+                    log.info(other+":feed eof %d" % idx)
                     break
-
-                else:
-                    conn.writer.write(data[1:])
-                    dlen = len(data)
-                    if dlen == 100:
-                        while True:
-                            doc = await future_async(r.read, SMALL_BUFFER_SIZE)
-                            conn.writer.write(doc)
-                            if not doc:
-                                break
-                            dlen += len(doc)
-                    elif dlen > 100:
-                        log.info("Just read the whole packet" + str(idx))
-
-                    log.info(other+": feeded %d as %d b, is_svgd: %r" % (idx, dlen, task.is_scavenged))
 
                 future_async(conn.uagnet.ack_packet, actor, idx)
 
@@ -641,8 +663,6 @@ async def actor_pipe_uag_to_socket(actor, conn):
             else:
                 log.debug(other+": when polling uag, data was None")
                 await asyncio.sleep(NEXT_TICK)
-        else:
-            await asyncio.sleep(NEXT_TICK)
 
     log.warn(other+': writer closed')
 
@@ -730,10 +750,10 @@ async def valet_contact_server(uag):
 async def watch_doge():
     while True:
         last_time = time.time()
-        await asyncio.sleep(0.03)
+        await asyncio.sleep(0.05)
         waited = time.time() - last_time
-        if waited > 0.04:
-            log.error("HICCUP!!! %f secs!!!" % waited)
+        if waited > 0.5:
+            log.error("Hiccup (%f s)" % waited)
         else:
             # log.info('ok')
             pass
