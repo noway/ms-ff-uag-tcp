@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 
-# ToDo: init methods
-# ToDo: clean up methods
 # ToDo: multiple connections?
-
-# main problem about urllib2: no async, no connection pool
-# research connectionppol at httplib and urllib3
-# httplib2 ?
 
 import asyncio
 
