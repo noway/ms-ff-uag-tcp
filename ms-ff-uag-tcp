@@ -62,22 +62,6 @@ ACCEPT = "*/*"
 ALLOW_REDIRECT = True
 
 
-# ARGS.add_argument(
-#     '--domain', action="store", dest='domain', default='localhost',
-#     type=str, help='Domain of MS ForeFront UAG')
-
-# ARGS.add_argument(
-#     '--cafile', action="store", dest='cafile', default='creds/cacert.pem',
-#     type=str, help='Certificate chain for UAG https')
-
-# ARGS.add_argument(
-#     '--auth', action="store", dest='auth', default='creds/auth.txt', type=str,
-#     help='Username and password in plaintext separated by a new line')
-
-# ARGS.add_argument(
-#     '--dir', action="store", dest='dir', default='',
-#     type=str, help='Directory in MS FF')
-
 ARGS.add_argument(
     '--config', action="store", dest='config', default='config', type=str,
     help='path to config (relative to script directory)')
@@ -789,8 +773,6 @@ if __name__ == '__main__':
     # setup console logging
 
     args = ARGS.parse_args()
-    # with open(args.auth, 'r') as args.auth:
-    #     auth_creds = args.auth.read()
 
     args.server = Address(args.server)
     args.client = Address(args.client)
@@ -812,13 +794,12 @@ if __name__ == '__main__':
     ch.setFormatter(formatter)
     log.addHandler(ch)
     
-
-    PATH = sys.path[0]
+    CONFIG_PATH = os.path.join(sys.path[0], args.config)
 
     config = configparser.ConfigParser()
-    config.read(PATH+'/'+args.config+'/creds.txt')
+    config.read(os.path.join(CONFIG_PATH, 'creds.txt'))
 
-    ctx = ssl.create_default_context(cafile=(PATH+'/'+args.config+'/'+config['verify']['cert']))
+    ctx = ssl.create_default_context(cafile=os.path.join(CONFIG_PATH, config['verify']['cert']))
     cj = CookieJar(
         DefaultCookiePolicy(
             rfc2965=True,
@@ -840,6 +821,7 @@ if __name__ == '__main__':
         clean_method(uag, '.ms-ff-uag-tcp-data')
         init_method(uag)
     # elif args.unit:
+        # Unit tests would be of use
         # create_folder(opener, main_url, 'testing-folders')
         # pprint(list_folder(opener, main_url, ''))
         # pprint(get_content(opener, main_url, 'ms-ff-uag-tcp.md'))
@@ -862,9 +844,6 @@ if __name__ == '__main__':
                 host=args.client.host, port=args.client.port)
             log.info("Server is listening on port 8000")
 
-        # f = asyncio.ensure_future(kek())
         asyncio.ensure_future(watch_doge())
         loop.run_until_complete(f)
         loop.run_forever()
-
-    # Unit tests would be of use
