@@ -200,9 +200,15 @@ class uagNetworkHandle:
         return self.uag.list_folder(
             ".ms-ff-uag-tcp-data/%s-est/" % self.token)
 
-    def commence_packet(self, line, idx):
-        return self.uag.get_content(
-            uagNetworkHandle.pck_uri(self.token, line, idx))
+    def commence_packet(self, line, idx, handle_youself=False):
+        if not handle_youself:
+            return self.uag.get_content(
+                uagNetworkHandle.pck_uri(self.token, line, idx))
+        else:
+            return self.uag.get_content(
+                uagNetworkHandle.pck_uri(self.token, line, idx, handle_youself=True))
+
+
 
     def send_packet(self, line, idx, packet):
         self.uag.put_file(
@@ -423,7 +429,7 @@ class UAGSession:
 
         return html_doc
 
-    def get_content(self, file):
+    def get_content(self, file, handle_youself=False):
 
         folder = args.dir + "/" + file
         folder_escaped = quote(folder, safe='')
@@ -439,7 +445,11 @@ class UAGSession:
 
         try:
             r = self.opener.open(url)
-            doc = r.read(100)
+            if handle_youself:
+                doc = r.read()
+                log.info("Just read the whole packet")
+            else:
+                doc = r.read(100)
             doc_text = doc.decode('cp437', 'ignore')
             is_404 = doc_text.find("content='0;URL=errorPage.asp?error=404")
         except urllib.error.HTTPError:
@@ -493,7 +503,7 @@ async def scavenge_for_new_tasks(actor, conn, tasks):
 
             # task = future_async(conn.uagnet.commence_packet, actor, tasks_id)
             tasks.append(PckTask(tasks_id, future_async(
-                conn.uagnet.commence_packet, actor, tasks_id, timeout=1.5)))
+                conn.uagnet.commence_packet, actor, tasks_id, True, timeout=1.5)))
 
             tasks_id += 1
             informal_pip += 1
@@ -603,13 +613,14 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
                 else:
                     conn.writer.write(data[1:])
-                    dlen = 100
-                    while True:
-                        doc = await future_async(r.read, SMALL_BUFFER_SIZE)
-                        conn.writer.write(doc)
-                        if not doc:
-                            break
-                        dlen += len(doc)
+                    dlen = len(data)
+                    if dlen == 100:
+                        while True:
+                            doc = await future_async(r.read, SMALL_BUFFER_SIZE)
+                            conn.writer.write(doc)
+                            if not doc:
+                                break
+                            dlen += len(doc)
 
                     log.info(other+": feeded %d as %d b" % (idx, dlen))
 
