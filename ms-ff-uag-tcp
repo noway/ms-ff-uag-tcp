@@ -3,12 +3,14 @@
 # ToDo: init methods
 # ToDo: clean up methods
 # ToDo: multiple connections?
-# from scavenger read the whole packet content
 # install opener
 
 # main problem about urllib2: no async, no connection pool
 # research connectionppol at httplib and urllib3
 # httplib2 ?
+
+# use dict for scavenger
+
 import asyncio
 
 try:
@@ -469,7 +471,7 @@ class UAGSession:
         return (doc, r, file, xvgd)
 
 import threading
-lock = threading.Lock()
+scavenger_lock = threading.Lock()
 
 
 class ScavengerContext:
@@ -495,40 +497,40 @@ async def scavenge_for_new_tasks(actor, conn, xvgd_c):
             listing = await future_async(
                 conn.uagnet.unrecieved_packets, actor, timeout=1.5) or []
         except concurrent.futures._base.TimeoutError:
+            listing = []
             log.info("recovered timeout scavenger")
 
-            listing = []
+        global scavenger_lock
 
-        lock.acquire()
+        with scavenger_lock:
+            tasks_id = xvgd_c.tasks_id + 1
+            informal_pip = 0
+            # log.info("scgr tasks_id + 1: %d " % tasks_id)
+            # We are relying here on UAG alphanumerical sorting
+            for i in listing:
+                seq_id = uagNetworkHandle.pck_uri_to_idx(i.name)
 
-        tasks_id = xvgd_c.tasks_id + 1
-        informal_pip = 0
-        #log.info("scgr tasks_id + 1: %d " % tasks_id)
-        # We are relying here on UAG alphanumerical sorting
-        for i in listing:
-            seq_id = uagNetworkHandle.pck_uri_to_idx(i.name)
+                if seq_id < tasks_id:
+                    continue
 
+                if seq_id > tasks_id:
+                    log.debug(other+": MISSING SEQ ORDER PACKET. ok...")
+                    log.debug("%d vs %d" % (seq_id, tasks_id))
+                    break
 
-            if seq_id < tasks_id:
-                continue
+                xvgd_c.tasks[tasks_id] = PckTask(tasks_id, future_async(
+                    conn.uagnet.commence_packet, actor, tasks_id, True, timeout=1.5), True)
+                xvgd_c.tasks_id = tasks_id
 
-            if seq_id > tasks_id:
-                log.debug(other+": MISSING SEQ ORDER PACKET. ok...")
-                log.debug("%d vs %d" % (seq_id, tasks_id))
-                break
+                log.info("added %d" % tasks_id)
 
-            xvgd_c.tasks.append(PckTask(tasks_id, future_async(
-                conn.uagnet.commence_packet, actor, tasks_id, True, timeout=1.5), True))
-            xvgd_c.tasks_id = tasks_id
+                tasks_id += 1
+                informal_pip += 1
 
-            tasks_id += 1
-            informal_pip += 1
+                if informal_pip > 5:
+                    # rate limit
+                   break
 
-            if informal_pip > 5:
-                # rate limit
-                break
-
-        lock.release()
 
         if informal_pip:
             log.debug(other + ": Scavenger found %d pcks" % informal_pip)
@@ -596,7 +598,7 @@ async def actor_pipe_uag_to_socket(actor, conn):
     other = "mister" if actor == "valet" else "valet"
 
     xvgd_c = ScavengerContext()
-    xvgd_c.tasks = deque()#[]
+    xvgd_c.tasks = {}
 
     while conn.is_connected_or_connecting and not wrote_eof:
 
@@ -604,12 +606,13 @@ async def actor_pipe_uag_to_socket(actor, conn):
             await asyncio.sleep(1)
             pass
 
-        lock.acquire()
-        if not len(xvgd_c.tasks):
-            xvgd_c.tasks.append(PckTask(idx, future_async(
-                conn.uagnet.commence_packet, actor, idx, timeout=1.5), False))
-            xvgd_c.tasks_id = idx
-        lock.release()
+        global scavenger_lock
+
+        with scavenger_lock:
+            if not len(xvgd_c.tasks):
+                xvgd_c.tasks[idx] = PckTask(idx, future_async(conn.uagnet.commence_packet, actor, idx, timeout=1.5), False)
+                xvgd_c.tasks_id = idx
+                log.info("actor added %d" % xvgd_c.tasks_id)
 
         if first_time:
             asyncio.ensure_future(scavenge_for_new_tasks(actor, conn, xvgd_c))
@@ -617,8 +620,8 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
         log.debug(other+": starting ordered parallelism")
 
-        while len(xvgd_c.tasks):
-            task = xvgd_c.tasks.popleft()
+        while idx in xvgd.tasks
+            task = xvgd_c.tasks[idx] # .popleft()
             log.debug("tasks.len: %d"%len(xvgd_c.tasks))
             try:
                 data, r, url, xvgd = await task.task
