@@ -1,0 +1,10 @@
+[auth]
+domain=fileaccess.example.com
+username=DOMAIN\user
+password=12345678
+
+[verify]
+cert=-.example.com.pem
+
+[fileaccess]
+directory=//server/share/you

@@ -26,6 +26,7 @@ import argparse
 
 import urllib.request
 import ssl
+import configparser
 
 from urllib.parse import urljoin
 from urllib.parse import quote
@@ -40,7 +41,7 @@ from keepalive import HTTPHandler
 
 
 log = logging.getLogger(__name__)
-
+config = None
 # sys.setcheckinterval(0)
 
 ALARM_GARBAGE_SIZE = 1024*1024*4
@@ -61,21 +62,25 @@ ACCEPT = "*/*"
 ALLOW_REDIRECT = True
 
 
-ARGS.add_argument(
-    '--domain', action="store", dest='domain', default='localhost',
-    type=str, help='Domain of MS ForeFront UAG')
+# ARGS.add_argument(
+#     '--domain', action="store", dest='domain', default='localhost',
+#     type=str, help='Domain of MS ForeFront UAG')
+
+# ARGS.add_argument(
+#     '--cafile', action="store", dest='cafile', default='creds/cacert.pem',
+#     type=str, help='Certificate chain for UAG https')
+
+# ARGS.add_argument(
+#     '--auth', action="store", dest='auth', default='creds/auth.txt', type=str,
+#     help='Username and password in plaintext separated by a new line')
+
+# ARGS.add_argument(
+#     '--dir', action="store", dest='dir', default='',
+#     type=str, help='Directory in MS FF')
 
 ARGS.add_argument(
-    '--cafile', action="store", dest='cafile', default='creds/cacert.pem',
-    type=str, help='Certificate chain for UAG https')
-
-ARGS.add_argument(
-    '--auth', action="store", dest='auth', default='creds/auth.txt', type=str,
-    help='Username and password in plaintext separated by a new line')
-
-ARGS.add_argument(
-    '--dir', action="store", dest='dir', default='',
-    type=str, help='Directory in MS FF')
+    '--config', action="store", dest='config', default='config', type=str,
+    help='path to config (relative to script directory)')
 
 ARGS.add_argument(
     '--server', action="store", dest='server',
@@ -232,7 +237,7 @@ class UAGSession:
         self.opener = opener
 
     def perform_auth(self):
-        url = urllib.request.Request("https://" + args.domain + "/")
+        url = urllib.request.Request("https://" + config['auth']['domain'] + "/")
         url.add_header("User-Agent", USER_AGENT)
         url.add_header("Accept", ACCEPT)
 
@@ -255,8 +260,8 @@ class UAGSession:
         post_data = {
             "dummy_repository": uag_dummy_repository,
             "repository": uag_repository,
-            "user_name": auth_creds.split("\n")[0],
-            "password": auth_creds.split("\n")[1],
+            "user_name": config['auth']['username'],
+            "password": config['auth']['password'],
             "site_name": "fileaccess",
             "secure": "1",
             "resource_id": "2",
@@ -295,7 +300,7 @@ class UAGSession:
 
     def put_file(self, file, file_content):
 
-        folder = args.dir + "/" + file
+        folder = config['fileaccess']['directory'] + "/" + file
         folder_escaped = quote(folder, safe='')
         folder_canonical = folder.replace('/', '\\').replace('\\\\', '//')
 
@@ -306,7 +311,7 @@ class UAGSession:
 
         files = OrderedDict([
             ("Filedata", (file, file_content, 'application/octet-stream')),
-            ("remotefile", args.dir),
+            ("remotefile", config['fileaccess']['directory']),
             ("remotefilename", folder_canonical),
             ("overwrite", "on"),
         ])
@@ -334,7 +339,7 @@ class UAGSession:
 
     def create_folder(self, directory):
 
-        folder = args.dir + "/" + directory
+        folder = config['fileaccess']['directory'] + "/" + directory
         folder_escaped = quote(folder, safe='')
 
         create_folder_url = urljoin(
@@ -343,7 +348,7 @@ class UAGSession:
 
         files = OrderedDict([
             ("Filedata", directory),
-            ("remotefile", args.dir),
+            ("remotefile", config['fileaccess']['directory']),
             ("submit1", "Create Folder"),
         ])
 
@@ -368,7 +373,7 @@ class UAGSession:
 
     def list_folder(self, directory):
 
-        folder = args.dir + "/" + directory
+        folder = config['fileaccess']['directory'] + "/" + directory
         folder_escaped = quote(folder, safe='')
 
         create_folder_url = urljoin(
@@ -406,7 +411,7 @@ class UAGSession:
 
     def delete_file(self, file):
 
-        folder = args.dir + "/" + file
+        folder = config['fileaccess']['directory'] + "/" + file
         folder_escaped = quote(folder, safe='')
 
         create_folder_url = urljoin(
@@ -430,7 +435,7 @@ class UAGSession:
 
     def get_content(self, file, handle_youself=False):
 
-        folder = args.dir + "/" + file
+        folder = config['fileaccess']['directory'] + "/" + file
         folder_escaped = quote(folder, safe='')
 
         create_folder_url = urljoin(
@@ -737,17 +742,6 @@ async def valet_contact_server(uag):
         asyncio.ensure_future(actor_pipe_uag_to_socket('mister', conn))
         await actor_pipe_socket_to_uag("valet", conn)
 
-# async def kek():
-#     tasks = []
-#     for i in range(0, 5):
-#         tasks.append(asyncio.wait_for(loop.run_in_executor(
-#             None, uag.list_folder, '.ms-ff-uag-tcp-data'), 0.99))
-#     for i in tasks:
-#         try:
-#             print(len(await i))
-#         except:
-#             print("err")
-
 async def watch_doge():
     while True:
         last_time = time.time()
@@ -795,8 +789,8 @@ if __name__ == '__main__':
     # setup console logging
 
     args = ARGS.parse_args()
-    with open(args.auth, 'r') as args.auth:
-        auth_creds = args.auth.read()
+    # with open(args.auth, 'r') as args.auth:
+    #     auth_creds = args.auth.read()
 
     args.server = Address(args.server)
     args.client = Address(args.client)
@@ -817,8 +811,14 @@ if __name__ == '__main__':
 
     ch.setFormatter(formatter)
     log.addHandler(ch)
+    
 
-    ctx = ssl.create_default_context(cafile=args.cafile)
+    PATH = sys.path[0]
+
+    config = configparser.ConfigParser()
+    config.read(PATH+'/'+args.config+'/creds.txt')
+
+    ctx = ssl.create_default_context(cafile=(PATH+'/'+args.config+'/'+config['verify']['cert']))
     cj = CookieJar(
         DefaultCookiePolicy(
             rfc2965=True,
