@@ -67,3 +67,4 @@ ENV/
 
 # ms-ff-uag-tcp stuff
 creds/
+config/
