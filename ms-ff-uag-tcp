@@ -609,7 +609,7 @@ async def actor_pipe_uag_to_socket(actor, conn):
         global scavenger_lock
 
         with scavenger_lock:
-            if not len(xvgd_c.tasks):
+            if idx not in xvgd_c.tasks:
                 xvgd_c.tasks[idx] = PckTask(idx, future_async(conn.uagnet.commence_packet, actor, idx, timeout=1.5), False)
                 xvgd_c.tasks_id = idx
                 log.info("actor added %d" % xvgd_c.tasks_id)
@@ -620,8 +620,9 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
         log.debug(other+": starting ordered parallelism")
 
-        while idx in xvgd.tasks
+        while idx in xvgd_c.tasks:
             task = xvgd_c.tasks[idx] # .popleft()
+            del xvgd_c.tasks[idx]
             log.debug("tasks.len: %d"%len(xvgd_c.tasks))
             try:
                 data, r, url, xvgd = await task.task
