@@ -1,3 +1,4 @@
+# Enviorment
 Using `pyenv` and `virtualenv`:
 
 ```bash
@@ -14,6 +15,16 @@ pyenv shell 3.5.2
 pip install -r requirements.txt
 ```
 
+# Config
+```bash
+$ cp -a config-example/ config/
+$ vi config/creds.txt
+```
+
 # Init
-For a first start invocation with `--init` is required
+For a first start invocation with `--init` is required, i.e.
+
+```bash
+./ms-ff-uag-tcp --init --quiet 1
+```
 
