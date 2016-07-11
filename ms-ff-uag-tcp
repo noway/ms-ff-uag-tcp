@@ -508,7 +508,7 @@ async def scavenge_for_new_tasks(actor, conn, xvgd_c):
                     conn.uagnet.commence_packet, actor, tasks_id, True, timeout=1.5), True)
                 xvgd_c.tasks_id = tasks_id
 
-                log.info("added %d" % tasks_id)
+                log.debug("added %d" % tasks_id)
 
                 tasks_id += 1
                 informal_pip += 1
@@ -598,7 +598,7 @@ async def actor_pipe_uag_to_socket(actor, conn):
             if idx not in xvgd_c.tasks:
                 xvgd_c.tasks[idx] = PckTask(idx, future_async(conn.uagnet.commence_packet, actor, idx, timeout=1.5), False)
                 xvgd_c.tasks_id = idx
-                log.info("actor added %d" % xvgd_c.tasks_id)
+                log.debug("actor added %d" % xvgd_c.tasks_id)
 
         if first_time:
             asyncio.ensure_future(scavenge_for_new_tasks(actor, conn, xvgd_c))
@@ -637,7 +637,8 @@ async def actor_pipe_uag_to_socket(actor, conn):
                         dlen += len(doc)
                         if not doc:
                             break
-                log.info(other+":feed %d(%d b),%s,xvgd:%d" % (idx, dlen,url, task.is_scavenged))
+                seq_id = uagNetworkHandle.pck_uri_to_idx(url)
+                log.info(other+":feed %d(%d b),org %d,xvgd:%d" % (idx, dlen,seq_id, task.is_scavenged))
 
                 if data[0] == b'!'[0]:
                     await conn.writer.drain()
