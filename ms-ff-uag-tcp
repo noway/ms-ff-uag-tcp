@@ -134,6 +134,8 @@ class connectionHandle:
     reader = None
     writer = None
 
+    token = ''
+
     is_connected_or_connecting = False
 
     def __init__(self, uagnet):
@@ -474,55 +476,55 @@ def future_async(*args, timeout=0):
         return asyncio.ensure_future(
             asyncio.wait_for(loop.run_in_executor(None, *args), timeout))
 
-async def scavenge_for_new_tasks(actor, conn, xvgd_c):
-    other = "mister" if actor == "valet" else "valet"
+# async def scavenge_for_new_tasks(actor, conn, xvgd_c):
+#     other = "mister" if actor == "valet" else "valet"
 
-    while conn.is_connected_or_connecting:
+#     while conn.is_connected_or_connecting:
 
-        try:
-            listing = await future_async(
-                conn.uagnet.unrecieved_packets, actor, timeout=1.5) or []
-        except concurrent.futures._base.TimeoutError:
-            listing = []
-            log.info("recovered timeout scavenger")
+#         try:
+#             listing = await future_async(
+#                 conn.uagnet.unrecieved_packets, actor, timeout=1.5) or []
+#         except concurrent.futures._base.TimeoutError:
+#             listing = []
+#             log.info("recovered timeout scavenger")
 
-        global scavenger_lock
+#         global scavenger_lock
 
-        with scavenger_lock:
-            tasks_id = xvgd_c.tasks_id + 1
-            informal_pip = 0
-            # log.info("scgr tasks_id + 1: %d " % tasks_id)
-            # We are relying here on UAG alphanumerical sorting
-            for i in listing:
-                seq_id = uagNetworkHandle.pck_uri_to_idx(i.name)
+#         with scavenger_lock:
+#             tasks_id = xvgd_c.tasks_id + 1
+#             informal_pip = 0
+#             # log.info("scgr tasks_id + 1: %d " % tasks_id)
+#             # We are relying here on UAG alphanumerical sorting
+#             for i in listing:
+#                 seq_id = uagNetworkHandle.pck_uri_to_idx(i.name)
 
-                if seq_id < tasks_id:
-                    continue
+#                 if seq_id < tasks_id:
+#                     continue
 
-                if seq_id > tasks_id:
-                    log.debug(other+": MISSING SEQ ORDER PACKET. ok...")
-                    log.debug("%d vs %d" % (seq_id, tasks_id))
-                    break
+#                 if seq_id > tasks_id:
+#                     log.debug(other+": MISSING SEQ ORDER PACKET. ok...")
+#                     log.debug("%d vs %d" % (seq_id, tasks_id))
+#                     break
 
-                xvgd_c.tasks[tasks_id] = PckTask(tasks_id, future_async(
-                    conn.uagnet.commence_packet, actor, tasks_id, True, timeout=1.5), True)
-                xvgd_c.tasks_id = tasks_id
+#                 xvgd_c.tasks[tasks_id] = PckTask(tasks_id, future_async(
+#                     conn.uagnet.commence_packet, actor, tasks_id, True, timeout=1.5), True)
+#                 xvgd_c.tasks_id = tasks_id
 
-                log.debug("added %d" % tasks_id)
+#                 log.debug("added %d" % tasks_id)
 
-                tasks_id += 1
-                informal_pip += 1
+#                 tasks_id += 1
+#                 informal_pip += 1
 
-                if informal_pip > 5:
-                    # rate limit
-                   break
+#                 if informal_pip > 5:
+#                     # rate limit
+#                    break
 
 
-        if informal_pip:
-            log.debug(other + ": Scavenger found %d pcks" % informal_pip)
+#         if informal_pip:
+#             log.debug(other + ": Scavenger found %d pcks" % informal_pip)
 
-        #await asyncio.sleep(0.67)
-        await asyncio.sleep(NEXT_TICK)
+#         #await asyncio.sleep(0.67)
+#         await asyncio.sleep(NEXT_TICK)
 
 async def actor_pipe_socket_to_uag(actor, conn):
 
@@ -691,41 +693,91 @@ async def mister_contact_client(uag, client_reader, client_writer):
 
     await actor_pipe_socket_to_uag("mister", conn)
 
+async def go_for_connect(conn, xvgd_c):
+
+    await asyncio.open_connection(args.server.host, args.server.port)
+    await future_async(conn.uagnet.do_synack)
+
+    asyncio.ensure_future(actor_pipe_uag_to_socket('mister', conn))
+    await actor_pipe_socket_to_uag("valet", conn)
 
 async def valet_contact_server(uag):
 
-    # server is capable of only one connection at a time.
-    while True:
+    #while True:
 
-        delayed_open = None
+    delayed_open = None
 
-        conn = connectionHandle(uagNetworkHandle(uag))
 
-        while True:
-            data = await future_async(conn.uagnet.lookup_syns)
+    our_conns = {}
+    while True:#conn.is_connected_or_connecting:
 
-            if len(data):
-                conn.uagnet.token = uagNetworkHandle.conn_uri_to_token(
-                    data[0].name)
+        try:
+            listing = await future_async(
+                conn.uagnet.unrecieved_packets, actor, timeout=1.5) or []
+        except concurrent.futures._base.TimeoutError:
+            listing = []
+            log.info("recovered timeout scavenger")
 
-                conn.is_connected_or_connecting = True
+        for i in listing:
+            if i.startswith("to-connect"):
+                
+                token = i.replace('to-connect','')
+                conn = connectionHandle(uagNetworkHandle(uag))
+                conn.token = token
+                our_conns[token] = conn
 
-                delayed_open = asyncio.ensure_future(asyncio.open_connection(
-                    args.server.host, args.server.port))
+                delayed_open = asyncio.ensure_future(go_for_connect(conn))
 
-                await future_async(conn.uagnet.do_synack)
-                break
+        global scavenger_lock
+        with scavenger_lock:
+            informal_pip = 0
 
-            # await asyncio.sleep(NEXT_TICK)
+            # We are relying here on UAG alphanumerical sorting
+            for i in listing:
+                token, seq_id = uagNetworkHandle.pck_uri_to_idx(i.name)
 
-        log.info("VALET: new connection from MISTER %s" % conn.uagnet.token)
+                tasks_id = our_conns[token].tasks_id + 1
+                
+                if seq_id < tasks_id:
+                    continue
 
-        conn.reader, conn.writer = await delayed_open
+                if seq_id > tasks_id:
+                    log.debug(other+": MISSING SEQ ORDER PACKET. ok...")
+                    log.debug("%d vs %d" % (seq_id, tasks_id))
+                    break
 
-        log.info("VALET: established server conn for %s" % conn.uagnet.token)
+                our_conns[token].tasks[tasks_id] = PckTask(tasks_id, future_async(conn.uagnet.commence_packet, actor, token, tasks_id, True, timeout=1.5), True)
+                our_conns[token].tasks_id = tasks_id
 
-        asyncio.ensure_future(actor_pipe_uag_to_socket('mister', conn))
-        await actor_pipe_socket_to_uag("valet", conn)
+                log.debug("added %d" % tasks_id)
+
+                # informal_pip += 1
+                # if informal_pip > 5:
+                #     # rate limit
+                #    break
+
+        # if informal_pip:
+        #     log.debug(other + ": Scavenger found %d pcks" % informal_pip)
+
+        await asyncio.sleep(0.67)
+
+    # while True:
+    #     data = await future_async(conn.uagnet.lookup_syns)
+
+    #     if len(data):
+    #         conn.uagnet.token = uagNetworkHandle.conn_uri_to_token(
+    #             data[0].name)
+
+    #         conn.is_connected_or_connecting = True
+
+    #         delayed_open = asyncio.ensure_future(asyncio.open_connection(
+    #             args.server.host, args.server.port))
+
+    #         await future_async(conn.uagnet.do_synack)
+    #         break
+
+    #     # await asyncio.sleep(NEXT_TICK)
+
 
 async def watch_doge():
     while True:
