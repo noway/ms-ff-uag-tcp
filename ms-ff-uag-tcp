@@ -144,7 +144,6 @@ class connectionHandle:
 
 class uagNetworkHandle:
 
-    token = ''
     uag = None
 
     def __init__(self, uag):
@@ -166,29 +165,23 @@ class uagNetworkHandle:
 
     @staticmethod
     def gen_token():
-        return datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + (
-            '%08X' % random.randrange(16**8))
+        # return datetime.datetime.now().strftime("%H_%M-%d-%m-%Y_") + (
+        #     '%08X' % random.randrange(16**8))
+        return '%08X' % random.randrange(16**8)
 
-    def do_syn(self):
-        self.uag.put_file(
-            ".ms-ff-uag-tcp-data/to-connect/%s.con" % self.token, b'')
+    def do_syn(self, token):
+        # self.uag.put_file(
+        #     ".ms-ff-uag-tcp-data/to-connect/%s.con" % self.token, b'')
+        self.uag.put_file(".ms-ff-uag-tcp-data/exchange/to-connect-%s.con" % token, b'')
 
     def lookup_syns(self):
-        return self.uag.list_folder(".ms-ff-uag-tcp-data/to-connect/")
+        return self.uag.list_folder(".ms-ff-uag-tcp-data/exchange/")
 
-    def do_synack(self):
-        self.uag.create_folder(
-            ".ms-ff-uag-tcp-data/%s-est" % self.token)
-        self.uag.create_folder(
-            ".ms-ff-uag-tcp-data/%s-est/line-mister" % self.token)
-        self.uag.create_folder(
-            ".ms-ff-uag-tcp-data/%s-est/line-valet" % self.token)
-        self.uag.delete_file(
-            ".ms-ff-uag-tcp-data/to-connect/%s.con" % self.token)
+    def do_synack(self, token):
+        self.uag.delete_file(".ms-ff-uag-tcp-data/exchange/%s.con" % token)
 
     def lookup_synack(self):
-        return self.uag.list_folder(
-            ".ms-ff-uag-tcp-data/%s-est/" % self.token)
+        return self.uag.list_folder(".ms-ff-uag-tcp-data/exchange/")
 
     def commence_packet(self, line, idx, handle_youself=False):
         if not handle_youself:
@@ -205,8 +198,13 @@ class uagNetworkHandle:
             uagNetworkHandle.pck_uri(self.token, line, idx), packet)
 
     def unrecieved_packets(self, line):
-        return self.uag.list_folder(
-            ".ms-ff-uag-tcp-data/%s-est/line-%s" % (self.token, line))
+        if line != 'no-one':
+            return self.uag.list_folder(
+                ".ms-ff-uag-tcp-data/%s-est/line-%s" % (self.token, line))
+        else:
+            return self.uag.list_folder(
+                ".ms-ff-uag-tcp-data/exchange")
+
 
     def ack_packet(self, line, idx):
         self.uag.delete_file(uagNetworkHandle.pck_uri(self.token, line, idx))
@@ -573,7 +571,7 @@ async def actor_pipe_socket_to_uag(actor, conn):
 
     log.warn(actor+': reader closed')
     conn.is_connected_or_connecting = False
-from collections import deque
+
 
 async def actor_pipe_uag_to_socket(actor, conn):
 
@@ -590,9 +588,6 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
     while conn.is_connected_or_connecting and not wrote_eof:
 
-        if good_packet:
-            await asyncio.sleep(1)
-            pass
 
         global scavenger_lock
 
@@ -611,7 +606,7 @@ async def actor_pipe_uag_to_socket(actor, conn):
         while idx in xvgd_c.tasks:
             task = xvgd_c.tasks[idx] # .popleft()
             del xvgd_c.tasks[idx]
-            log.debug("tasks.len: %d"%len(xvgd_c.tasks))
+            log.debug("tasks.len: %d" % len(xvgd_c.tasks))
             try:
                 data, r, url, xvgd = await task.task
             except concurrent.futures._base.TimeoutError:
@@ -653,6 +648,7 @@ async def actor_pipe_uag_to_socket(actor, conn):
 
                 idx += 1
                 good_packet = True
+                await asyncio.sleep(1)
             else:
                 log.debug(other+": when polling uag, data was None")
                 await asyncio.sleep(NEXT_TICK)
@@ -667,8 +663,8 @@ async def mister_contact_client(uag, client_reader, client_writer):
     conn = connectionHandle(uagNetworkHandle(uag))
     conn.writer = client_writer
     conn.reader = client_reader
-    conn.uagnet.token = uagNetworkHandle.gen_token()
-    await future_async(conn.uagnet.do_syn)
+    token = uagNetworkHandle.gen_token()
+    await future_async(conn.uagnet.do_syn, token)
 
     conn.is_connected_or_connecting = True
 
@@ -706,22 +702,22 @@ async def valet_contact_server(uag):
     #while True:
 
     delayed_open = None
-
+    uagnet = uagNetworkHandle(uag)
 
     our_conns = {}
     while True:#conn.is_connected_or_connecting:
 
         try:
             listing = await future_async(
-                conn.uagnet.unrecieved_packets, actor, timeout=1.5) or []
+                uagnet.unrecieved_packets, 'no-one', timeout=1.5) or []
         except concurrent.futures._base.TimeoutError:
             listing = []
             log.info("recovered timeout scavenger")
 
         for i in listing:
-            if i.startswith("to-connect"):
+            if i.name.startswith("to-connect-"):
                 
-                token = i.replace('to-connect','')
+                token = i.name.replace('to-connect-','')
                 conn = connectionHandle(uagNetworkHandle(uag))
                 conn.token = token
                 our_conns[token] = conn
