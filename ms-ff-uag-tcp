@@ -178,36 +178,31 @@ class uagNetworkHandle:
         return self.uag.list_folder(".ms-ff-uag-tcp-data/exchange/")
 
     def do_synack(self, token):
-        self.uag.delete_file(".ms-ff-uag-tcp-data/exchange/%s.con" % token)
+        self.uag.delete_file(".ms-ff-uag-tcp-data/exchange/to-connect-%s.con" % token)
 
     def lookup_synack(self):
         return self.uag.list_folder(".ms-ff-uag-tcp-data/exchange/")
 
-    def commence_packet(self, line, idx, handle_youself=False):
+    def commence_packet(self,token, line, idx, handle_youself=False):
         if not handle_youself:
             return self.uag.get_content(
-                uagNetworkHandle.pck_uri(self.token, line, idx))
+                uagNetworkHandle.pck_uri(token, line, idx))
         else:
             return self.uag.get_content(
-                uagNetworkHandle.pck_uri(self.token, line, idx), handle_youself=True)
+                uagNetworkHandle.pck_uri(token, line, idx), handle_youself=True)
 
 
 
-    def send_packet(self, line, idx, packet):
+    def send_packet(self, token, line, idx, packet):
         self.uag.put_file(
-            uagNetworkHandle.pck_uri(self.token, line, idx), packet)
+            uagNetworkHandle.pck_uri(token, line, idx), packet)
 
     def unrecieved_packets(self, line):
-        if line != 'no-one':
-            return self.uag.list_folder(
-                ".ms-ff-uag-tcp-data/%s-est/line-%s" % (self.token, line))
-        else:
-            return self.uag.list_folder(
-                ".ms-ff-uag-tcp-data/exchange")
+        return self.uag.list_folder(".ms-ff-uag-tcp-data/exchange")
 
 
-    def ack_packet(self, line, idx):
-        self.uag.delete_file(uagNetworkHandle.pck_uri(self.token, line, idx))
+    def ack_packet(self, token, line, idx):
+        self.uag.delete_file(uagNetworkHandle.pck_uri(token, line, idx))
 
 
 class UAGSession:
@@ -474,56 +469,6 @@ def future_async(*args, timeout=0):
         return asyncio.ensure_future(
             asyncio.wait_for(loop.run_in_executor(None, *args), timeout))
 
-# async def scavenge_for_new_tasks(actor, conn, xvgd_c):
-#     other = "mister" if actor == "valet" else "valet"
-
-#     while conn.is_connected_or_connecting:
-
-#         try:
-#             listing = await future_async(
-#                 conn.uagnet.unrecieved_packets, actor, timeout=1.5) or []
-#         except concurrent.futures._base.TimeoutError:
-#             listing = []
-#             log.info("recovered timeout scavenger")
-
-#         global scavenger_lock
-
-#         with scavenger_lock:
-#             tasks_id = xvgd_c.tasks_id + 1
-#             informal_pip = 0
-#             # log.info("scgr tasks_id + 1: %d " % tasks_id)
-#             # We are relying here on UAG alphanumerical sorting
-#             for i in listing:
-#                 seq_id = uagNetworkHandle.pck_uri_to_idx(i.name)
-
-#                 if seq_id < tasks_id:
-#                     continue
-
-#                 if seq_id > tasks_id:
-#                     log.debug(other+": MISSING SEQ ORDER PACKET. ok...")
-#                     log.debug("%d vs %d" % (seq_id, tasks_id))
-#                     break
-
-#                 xvgd_c.tasks[tasks_id] = PckTask(tasks_id, future_async(
-#                     conn.uagnet.commence_packet, actor, tasks_id, True, timeout=1.5), True)
-#                 xvgd_c.tasks_id = tasks_id
-
-#                 log.debug("added %d" % tasks_id)
-
-#                 tasks_id += 1
-#                 informal_pip += 1
-
-#                 if informal_pip > 5:
-#                     # rate limit
-#                    break
-
-
-#         if informal_pip:
-#             log.debug(other + ": Scavenger found %d pcks" % informal_pip)
-
-#         #await asyncio.sleep(0.67)
-#         await asyncio.sleep(NEXT_TICK)
-
 async def actor_pipe_socket_to_uag(actor, conn):
 
     idx = 1
@@ -534,11 +479,13 @@ async def actor_pipe_socket_to_uag(actor, conn):
 
         while sum(kept_data.values()) > ALARM_GARBAGE_SIZE:
 
-            files = await future_async(conn.uagnet.unrecieved_packets, actor)
+            files = await future_async(conn.uagnet.unrecieved_packets, 'no-one', actor)
 
             new_sent = {}
 
             for i in files:
+                if i.name.startswith("to-connect"):
+                    continue
                 key = uagNetworkHandle.pck_uri_to_idx(i.name)
                 new_sent[key] = sent_data[key]
 
@@ -678,7 +625,7 @@ async def mister_contact_client(uag, client_reader, client_writer):
             # await asyncio.sleep(NEXT_TICK)
             continue
 
-        if ListDir(False, "line-mister") not in data:
+        if ListDir(True, "to-connect-"+token+".con") in data:
             log.debug("still waiting to synack from server")
             # await asyncio.sleep(NEXT_TICK)
             continue
@@ -689,11 +636,12 @@ async def mister_contact_client(uag, client_reader, client_writer):
 
     await actor_pipe_socket_to_uag("mister", conn)
 
-async def go_for_connect(conn, xvgd_c):
+async def go_for_connect(conn):
 
-    await asyncio.open_connection(args.server.host, args.server.port)
-    await future_async(conn.uagnet.do_synack)
-
+    reader, writer = await asyncio.open_connection(args.server.host, args.server.port)
+    await future_async(conn.uagnet.do_synack, conn.token)
+    conn.reader = reader
+    conn.writer = writer
     asyncio.ensure_future(actor_pipe_uag_to_socket('mister', conn))
     await actor_pipe_socket_to_uag("valet", conn)
 
@@ -720,6 +668,7 @@ async def valet_contact_server(uag):
                 token = i.name.replace('to-connect-','')
                 conn = connectionHandle(uagNetworkHandle(uag))
                 conn.token = token
+                conn.uagnet = uagnet
                 our_conns[token] = conn
 
                 delayed_open = asyncio.ensure_future(go_for_connect(conn))
@@ -730,6 +679,8 @@ async def valet_contact_server(uag):
 
             # We are relying here on UAG alphanumerical sorting
             for i in listing:
+                if i.name.startswith("to-connect"):
+                    continue
                 token, seq_id = uagNetworkHandle.pck_uri_to_idx(i.name)
 
                 tasks_id = our_conns[token].tasks_id + 1
